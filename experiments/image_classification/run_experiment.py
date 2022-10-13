@@ -26,6 +26,19 @@ from absl import flags
 from jax_privacy.src.training.image_classification import experiment
 from jaxline import platform
 
+import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = '2,3'
+#os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
+# os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']='.80'
+from tensorflow.compat.v1 import ConfigProto
+from tensorflow.compat.v1 import InteractiveSession
+
+
+config = ConfigProto()
+config.gpu_options.allow_growth = True
+session = InteractiveSession(config=config)
+
+
 
 if __name__ == '__main__':
   flags.mark_flag_as_required('config')

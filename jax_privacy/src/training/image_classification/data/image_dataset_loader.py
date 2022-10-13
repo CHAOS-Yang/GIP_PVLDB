@@ -294,4 +294,6 @@ def load_32x32_image_dataset(
   ds = ds.map(lambda images, labels: {'images': images, 'labels': labels})
   ds = ds.prefetch(AUTOTUNE)
   ds = tfds.as_numpy(ds)
+  # for x in ds:
+  #   print(x['images'].shape,x['labels'].shape)
   return ds

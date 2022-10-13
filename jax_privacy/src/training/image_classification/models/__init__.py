@@ -25,6 +25,12 @@ import jax.numpy as jnp
 from jax_privacy.src.training.image_classification.models import cifar
 from jax_privacy.src.training.image_classification.models import imagenet
 from jax_privacy.src.training.image_classification.models import mnist
+from jax_privacy.src.training.image_classification.models import vgg16
+from jax_privacy.src.training.image_classification.models import resnet
+from jax_privacy.src.training.image_classification.models import gcn
+from jax_privacy.src.training.image_classification.models import lenet
+from jax_privacy.src.training.image_classification.models import alexnet
+from jax_privacy.src.training.image_classification.models import mlp
 from jax_privacy.src.training.image_classification.models.common import restore_from_path
 import numpy as np
 
@@ -33,6 +39,12 @@ MODELS = {
     'wideresnet': cifar.WideResNet,
     'cnn': mnist.MnistCNN,
     'nf_resnet': imagenet.NFResNet,
+    'vgg16':vgg16.VGG16,
+    'resnet18':resnet.ResNet18,
+    'gcn':gcn.GCN,
+    'lenet':lenet.LeNet,
+    'alexnet':alexnet.AlexNet,
+    'mlp':mlp.MLP,
 }
 
 

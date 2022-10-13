@@ -78,6 +78,8 @@ def topk_accuracy(
   Returns:
     Top-k accuracies for the given logits and labels.
   """
+  # print(logits.shape)
+  # print('*****', labels_one_hot.shape)
   assert logits.shape == labels_one_hot.shape
 
   label_scores = jnp.sum(logits * labels_one_hot, 1)

@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python run_experiment.py --config=configs/cifar10_vgg_eps1_top30.py --jaxline_mode=train_eval_multithreaded

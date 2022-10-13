@@ -58,6 +58,8 @@ def build_train_input_dataset(
       name=dataset.name,
       split=dataset.train.split_content,
       as_supervised=True,
+      # data_dir='/home/jungang/dataset',
+      # download=False,
   )
   preprocess_fn = functools.partial(
       preprocess_batch,
@@ -96,6 +98,8 @@ def build_eval_input_dataset(
       name=dataset.name,
       split=dataset.eval.split_content,
       as_supervised=True,
+      # data_dir='/home/jungang/dataset',
+      # download=False,
   )
   preprocess_fn = functools.partial(
       preprocess_batch,
@@ -127,7 +131,7 @@ def preprocess_batch(
 ) -> Tuple[tf.Tensor, tf.Tensor]:
   """Pre-processing module."""
   if dataset.name == 'mnist':
-    return _preprocess_batch_mnist(images, labels)
+    return _preprocess_batch_mnist(images, labels, is_training)
   elif dataset.name in ('cifar10', 'cifar100', 'svhn_cropped'):
     return image_dataset_loader.preprocess_32x32(
         images,
@@ -147,11 +151,18 @@ def preprocess_batch(
 def _preprocess_batch_mnist(
     images: tf.Tensor,
     labels: tf.Tensor,
+    is_training: bool,
 ) -> Tuple[tf.Tensor, tf.Tensor]:
   """Pre-processing module."""
   images = tf.image.convert_image_dtype(images, tf.float32)
   images = tf.clip_by_value(images * 2. - 1., -1., 1.)
+  # print('shape_1', images.shape) # (28, 28, 1)
+  # images = tf.reshape(images, (1, -1))
+  # print('shape_2', images.shape) # (28, 28)
   labels = tf.squeeze(tf.one_hot(labels, 10))
+  if is_training:
+    images = tf.expand_dims(images, 0)
+    labels = tf.expand_dims(labels, 0)
   return images, labels
 
 

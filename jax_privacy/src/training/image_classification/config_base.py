@@ -37,8 +37,16 @@ def _get_base_config() -> ml_collections.ConfigDict:
   """Return config object for training."""
   config = jaxline_base_config.get_base_config()
 
-  config.checkpoint_dir = '/tmp/jax_privacy/ckpt_dir'
+  config.checkpoint_dir = '/home/jungang/jax_privacy/result/test_batch'
 
+
+  #eps=1pruned
+  #eps=1pa=0.5
+  #eps=1pa=3.0
+  #eps=1pa=99.0
+  #test_linear_pa_1
+  #test_linear_pa_c
+  #linear_pa_1
   # We use same rng for all replicas:
   # (we take care of specializing ourselves the rngs where needed).
   config.random_mode_train = 'same_host_same_device'
@@ -47,9 +55,10 @@ def _get_base_config() -> ml_collections.ConfigDict:
 
   # Intervals can be measured in 'steps' or 'secs'.
   config.interval_type = 'steps'
-  config.log_train_data_interval = 100
-  config.log_tensors_interval = 100
+  config.log_train_data_interval = 200
+  config.log_tensors_interval = 200
   config.save_checkpoint_interval = 250
+  config.max_checkpoints_to_keep = 2
   config.eval_specific_checkpoint_dir = ''
 
   return config

@@ -27,6 +27,63 @@ class Split:
 
 
 _all_dataset_info: Dict[str, Dict[str, Any]] = {
+    'cora': {
+        'num_classes': 7,
+        'train': Split(
+            num_samples=140,
+            split_content='train[:27561]',
+        ),
+        'valid': Split(
+            num_samples=500,
+            split_content='train[27561:]',
+        ),
+        'train_valid': Split(
+            num_samples=640,
+            split_content='train',
+        ),
+        'test': Split(
+            num_samples=1000,
+            split_content='test',
+        ),
+    },
+    'adult': {
+        'num_classes': 2,
+        'train': Split(
+            num_samples=27_561,
+            split_content='train[:27561]',
+        ),
+        'valid': Split(
+            num_samples=5_000,
+            split_content='train[27561:]',
+        ),
+        'train_valid': Split(
+            num_samples=32_561,
+            split_content='train',
+        ),
+        'test': Split(
+            num_samples=16_281,
+            split_content='test',
+        ),
+    },
+    'mnist': {
+        'num_classes': 10,
+        'train': Split(
+            num_samples=45_000,
+            split_content='train[:45000]',
+        ),
+        'valid': Split(
+            num_samples=5_000,
+            split_content='train[45000:]',
+        ),
+        'train_valid': Split(
+            num_samples=50_000,
+            split_content='train',
+        ),
+        'test': Split(
+            num_samples=10_000,
+            split_content='test',
+        ),
+    },
     'cifar10': {
         'num_classes': 10,
         'train': Split(
@@ -120,6 +177,25 @@ _all_dataset_info: Dict[str, Dict[str, Any]] = {
         'test': Split(
             num_samples=328_500,
             split_content='test',
+        ),
+    },
+    'tiny_imagenet': {
+        'num_classes': 200,
+        'train': Split(
+            num_samples=100_000,
+            split_content='train[10000:]',
+        ),
+        'valid': Split(
+            num_samples=10_000,
+            split_content='train[:10000]',
+        ),
+        'train_valid': Split(
+            num_samples=110_000,
+            split_content='train',
+        ),
+        'test': Split(
+            num_samples=10_000,
+            split_content='validation',
         ),
     },
 }

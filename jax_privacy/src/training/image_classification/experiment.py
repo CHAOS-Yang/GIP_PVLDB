@@ -32,11 +32,15 @@ from jax_privacy.src.training.image_classification import data
 from jax_privacy.src.training.image_classification import forward
 from jax_privacy.src.training.image_classification import models
 from jax_privacy.src.training.image_classification import updater
+from jax_privacy.src.training import grad_clipping   #
 from jaxline import experiment
 from jaxline import utils
 import ml_collections
 import numpy as np
+import csv
 
+import functools  #
+import sys
 
 FLAGS = flags.FLAGS
 
@@ -97,11 +101,18 @@ class Experiment(experiment.AbstractExperiment):
     self._train_input = None
     self._eval_input = None
 
-    self.net = hk.transform_with_state(self._model_fn)
+    self.grad_0=None   #
+
+    
     self._average_ema = jax.pmap(averaging.ema, axis_name='i')
     self._average_polyak = jax.pmap(averaging.polyak, axis_name='i')
 
-    self.forward_fn = forward.MultiClassForwardFn(net=self.net)
+    if self.config.data.dataset == 'cora':
+      self.net = self._model_fn
+      self.forward_fn = forward.GCNForwardFn(net=self.net)
+    else:
+      self.net = hk.transform_with_state(self._model_fn)
+      self.forward_fn = forward.MultiClassForwardFn(net=self.net)
 
     train_init = self.forward_fn.train_init
     train_forward = self.forward_fn.train_forward
@@ -109,6 +120,13 @@ class Experiment(experiment.AbstractExperiment):
 
     self._num_classes = self.config.data.dataset.num_classes
     self.num_training_samples = self.config.data.dataset.train.num_samples
+    self.same_step = True
+    self.index_noise_weight = 0.01
+
+    
+      
+
+    self.num_devices = jax.device_count()
 
     cfg_batch_size = self.config.training.batch_size
     if cfg_batch_size.scale_schedule:
@@ -127,19 +145,37 @@ class Experiment(experiment.AbstractExperiment):
         scale_schedule=scale_schedule,
     )
 
+    if self.config.training.dp.batch_pruning_method=="TopK" and self.same_step==False:
+      noise_eps = self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight)
+    else:
+      noise_eps = self.config.training.dp.stop_training_at_epsilon
+      
     self.accountant = accounting.Accountant(
         clipping_norm=self.config.training.dp.clipping_norm,
         std_relative=self.config.training.dp.noise.std_relative,
-        dp_epsilon=self.config.training.dp.stop_training_at_epsilon,
+        dp_epsilon=noise_eps,
         dp_delta=self.config.training.dp.target_delta,
         batching=self.batching,
         num_samples=self.num_training_samples,
     )
 
+
     if self.config.training.dp.stop_training_at_epsilon:
       self._max_num_updates = self.accountant.compute_max_num_updates()
     else:
       self._max_num_updates = self.config.num_updates
+
+    if self.config.training.dp.batch_pruning_method=="TopK":
+      pruning_eps = self.config.training.dp.stop_training_at_epsilon * self.index_noise_weight
+      pruning_eps_step = pruning_eps / self._max_num_updates / self.config.training.batch_size.init_value * self.num_training_samples
+      if self.same_step==True:
+        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight)
+        sigma=self.accountant.compute_target_sigma(self._max_num_updates) #compute sigma from 0.9eps and the max_steps
+      else:
+        sigma=self.config.training.dp.noise.std_relative
+    else:
+      pruning_eps_step = None
+      sigma=self.config.training.dp.noise.std_relative
 
     # When a keyword argument is specified in `relative_schedule_kwargs`, it
     # means that its schedule is defined only relatively to the total number
@@ -150,13 +186,16 @@ class Experiment(experiment.AbstractExperiment):
         rel_val = self.config.optimizer.lr.decay_schedule_kwargs[kwarg_name]
         abs_val = rel_val * self._max_num_updates
         self.config.optimizer.lr.decay_schedule_kwargs[kwarg_name] = abs_val
+    
+    #device num
+    self._max_step=self._max_num_updates*self.config.training.batch_size.init_value/(self.config.training.batch_size.per_device_per_step*self.num_devices)
 
     self.updater = updater.Updater(
         batching=self.batching,
         train_init=train_init,
         forward=train_forward,
         clipping_norm=self.config.training.dp.clipping_norm,
-        noise_std_relative=self.config.training.dp.noise.std_relative,
+        noise_std_relative=sigma,
         rescale_to_unit_norm=self.config.training.dp.rescale_to_unit_norm,
         weight_decay=self.config.training.weight_decay,
         optimizer_name=self.config.optimizer.name,
@@ -169,6 +208,13 @@ class Experiment(experiment.AbstractExperiment):
         log_snr_per_layer=self.config.training.logging.snr_per_layer,
         log_grad_clipping=self.config.training.logging.grad_clipping,
         log_grad_alignment=self.config.training.logging.grad_alignment,
+        batch_pruning_method=self.config.training.dp.batch_pruning_method,
+        per_example_pruning_amount=self.config.training.dp.per_example_pruning_amount,
+        batch_pruning_amount=self.config.training.dp.batch_pruning_amount,
+        datalens_pruning=self.config.training.dp.datalens_pruning,
+        max_step=self._max_step,
+        pruning_eps_step=pruning_eps_step,
+        # paramsNum=paramsNum,
     )
 
   def _compute_epsilon(self, num_updates: chex.Numeric) -> float:
@@ -206,7 +252,13 @@ class Experiment(experiment.AbstractExperiment):
     if self._train_input is None:
       self._initialize_train()
 
-    self._params, self._network_state, self._opt_state, scalars = (
+    # for x in self._train_input:
+    # print("In exp step")
+    # print(next(self._train_input)['images'].shape, next(self._train_input)['labels'].shape)
+    # (1, 128, 28, 28) (1, 128, 10)
+    # exit(0)
+
+    self._params, self._network_state, self._opt_state, scalars= (
         self.updater.update(
             params=self._params,
             network_state=self._network_state,
@@ -214,18 +266,32 @@ class Experiment(experiment.AbstractExperiment):
             global_step=global_step,
             inputs=next(self._train_input),
             rng=rng,
+            #mode=mode1
         ))
-
+   
+    # print(np.size(grad_array))
+    # print(np.size(grad_array[0]))
     # Just return the tracking metrics on the first device for logging.
     scalars = utils.get_first(scalars)
     self._average_params()
+    # logging.info(global_step)
+    # print(self.config)
 
+
+    # if not self.config.training.dp.datalens_pruning and self.update_step % 20 == 0:
+    #   csv_file = open('/home/jungang/cos_plot/' +self.config.model.model_type+ self.config.training.dp.batch_pruning_method + str(self.config.training.dp.batch_pruning_amount)+ '_cos.csv','a',newline='',encoding='utf-8')
+    #   writer = csv.writer(csv_file)
+    #   writer.writerow(cos)
+
+    #print(jnp.sum(jnp.abs(grad_array)==0))
+
+
+  
     # Calculating these scalars at each step leads to a drastic reduction in TPU
     # duty cycle (from 90% to 50%).
     if self.update_step % 100 == 0:
       # Log dp_epsilon (outside the pmapped _update_func method).
       scalars.update(dp_epsilon=self._compute_epsilon(scalars['update_step']))
-
     # Convert arrays to scalars for logging and storing.
     return jax.tree_map(_to_scalar, scalars)
 
@@ -277,11 +343,11 @@ class Experiment(experiment.AbstractExperiment):
   def _initialize_train(self):
     """Initializes the data pipeline, the model and the optimizer."""
     self._train_input = utils.py_prefetch(self._build_train_input)
+    
 
     # Check that params have not already been restored.
     if self._params is None:
       rng_key = utils.bcast_local_devices(self.init_rng)
-
       self._params, self._network_state, self._opt_state = self.updater.init(
           inputs=next(self._train_input), rng_key=rng_key)
 
@@ -306,6 +372,7 @@ class Experiment(experiment.AbstractExperiment):
     """Builds the training input pipeline."""
     bs_per_device_per_step = self.batching.batch_size_per_device_per_step
     image_size_train = self.config.data.get('image_size.train')
+    # print('image', image_size_train)
     return data.build_train_input(
         dataset=self.config.data.dataset,
         image_size_train=image_size_train,

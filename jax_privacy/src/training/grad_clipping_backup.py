@@ -18,7 +18,6 @@
 from functools import total_ordering
 from re import T
 from typing import Callable, Tuple
-import numpy as np
 
 # from numpy import mask_indices
 
@@ -30,8 +29,6 @@ from jax_privacy.src.training import grad_clipping_utils
 import optax
 
 import jax.tree_util
-import tree
-#from jax_privacy.src.training.mallowsmodel import mallows_model
 
 Aux = chex.ArrayTree
 Inputs = chex.ArrayTree
@@ -59,7 +56,7 @@ def safe_div(
 
 
 def _placeholder_like(*args):
-  return jax.tree_util.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), args)
+  return jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), args)
 
 
 def global_clipping(
@@ -101,6 +98,7 @@ def global_clipping(
 
   def clipping_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
     grad_norm = optax.global_norm(grad)
+    #print(grad_norm)
     # If the value of `eps` is invalid because it is too large compared to
     # `clipping_norm`, propagate NaNs to show that the computation is invalid.
     # Note: this has the side effect of always back-propagating NaNs if we
@@ -110,7 +108,7 @@ def global_clipping(
     coeff = jnp.where(clipping_norm > eps, coeff_fn(grad_norm), jnp.nan)
     #quantile = jnp.percentile(coeff,10)
     
-    return jax.tree_util.tree_map(lambda x: x * coeff, grad), grad_norm
+    return jax.tree_map(lambda x: x * coeff, grad), grad_norm
 
   return clipping_fn
 
@@ -120,25 +118,28 @@ def pruning(  ##
   def pruning_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
     tree_value, tree_def=jax.tree_flatten(grad)
     tree_value=map(leaves_pruning,tree_value)
-    #tree_value=jax.vmap(lambda x: leaves_pruning(x), tree_value)
+    #tree_value=jax.vmap(leaves_pruning,in_axes=(0,0),out_axes=0)(tree_value)
     #vmap
     tree_output=jax.tree_unflatten(tree_def,tree_value)
     return tree_output
 
   def leaves_pruning(leaves):
     quantile=jnp.percentile(jnp.abs(jnp.array(leaves)), 100-pruning_amount)
-    return jax.tree_util.tree_map(lambda x: x * get_mask(x, quantile), leaves)
+    return jax.tree_map(lambda x: x * get_mask(x, quantile), leaves)
 
-  # def leaves_pruning_with_mallows(leaves):
-  #   quantile=jnp.percentile(jnp.abs(jnp.array(leaves)), 100-pruning_amount)
-  #   mask=jax.tree_util.tree_map(lambda x: get_mask(x, quantile), leaves)
-  #   mask_p=mallows_model(mask, pruning_amount)
-  #   return jax.tree_util.tree_map(lambda x,y: x*y , leaves, mask_p)
-
-  
   def get_mask(x, quantile):
     return  jnp.where(jnp.abs(x) > quantile, jnp.ones_like(x), jnp.zeros_like(x))
   
+  # def pruning_fn(grad: GradParams) -> Tuple[GradParams, Aux]:    ##old
+  #   grad_leaves=jax.tree_leaves(grad)
+  #   grad_array=None
+  #   for i in range(len(grad_leaves)):
+  #     if grad_array==None:
+  #       grad_array=jnp.array(grad_leaves[i])
+  #     else:
+  #       grad_array=jnp.append(grad_array,jnp.array(grad_leaves[i]))
+  #   quantile=jnp.percentile(jnp.abs(grad_array),0.1)
+  #   return jax.tree_map(lambda x: x * get_mask(x, quantile), grad)
 
   return pruning_fn
 
@@ -165,7 +166,7 @@ def _value_and_clipped_grad_single_sample(     #no pruning
       rng: chex.PRNGKey,
   ) -> Tuple[Tuple[Loss, Aux], Tuple[GradParams, Aux]]:
     # Add a batch-size dimension.
-    inputs_expanded = jax.tree_util.tree_map(
+    inputs_expanded = jax.tree_map(
         lambda x: jnp.expand_dims(x, axis=0),
         inputs,
     )
@@ -204,7 +205,7 @@ def _value_and_clipped_pruned_grad_single_sample(  ##
       rng: chex.PRNGKey,
   ) -> Tuple[Tuple[Loss, Aux], Tuple[GradParams, Aux]]:
     # Add a batch-size dimension.
-    inputs_expanded = jax.tree_util.tree_map(
+    inputs_expanded = jax.tree_map(
         lambda x: jnp.expand_dims(x, axis=0),
         inputs,
     )
@@ -264,12 +265,12 @@ def value_and_clipped_grad_loop(
     batch_size = jax.tree_leaves(inputs)[0].shape[0]
 
     if batch_size == 1:
-      inputs_0 = jax.tree_util.tree_map(lambda x: x[0], inputs)
+      inputs_0 = jax.tree_map(lambda x: x[0], inputs)
       return grad_fn_single_sample(
           params, inputs_0, network_state, rng)
 
     def body(value_and_grad, i):
-      inputs_i = jax.tree_util.tree_map(lambda x: x[i], inputs)
+      inputs_i = jax.tree_map(lambda x: x[i], inputs)
       value_and_grad_i = grad_fn_single_sample(
           params, inputs_i, network_state, rng)
       value_and_grad = accumulator.accumulate(
@@ -292,7 +293,7 @@ def value_and_clipped_grad_loop(
 def value_and_clipped_grad_vectorized(
     forward_fn: LossFn,
     clipping_fn: ClippingFn,
-    pruning_fn: PruningFn=None,
+    pruning_fn: PruningFn,
 ) -> GradFn:
   """Create a function that computes grads clipped per example using vmapping.
 
@@ -309,18 +310,12 @@ def value_and_clipped_grad_vectorized(
   Returns:
     Function that clips gradient per-example and average them.
   """
-  if pruning_fn is not None:
-    grad_fn_single_sample = _value_and_clipped_pruned_grad_single_sample(  ##
-        forward_fn=forward_fn,
-        clipping_fn=clipping_fn,
-        pruning_fn=pruning_fn,
-    )
-  else:
-    grad_fn_single_sample = _value_and_clipped_grad_single_sample(  ##
-        forward_fn=forward_fn,
-        clipping_fn=clipping_fn,
-    )
 
+  grad_fn_single_sample = _value_and_clipped_pruned_grad_single_sample(  ##
+      forward_fn=forward_fn,
+      clipping_fn=clipping_fn,
+      pruning_fn=pruning_fn,
+  )
 
   grad_fn_vectorized = jax.vmap(
       grad_fn_single_sample,
@@ -340,7 +335,6 @@ def value_and_clipped_grad_vectorized(
   ) -> Tuple[Tuple[Loss, Aux], Tuple[GradParams, Aux]]:
 
     # Compute vectorized outputs and clipped gradients.
-    # print(inputs.shape)
     vectorized_value_and_grad = grad_fn_vectorized(
         params, inputs, network_state, rng)
 
@@ -350,33 +344,3 @@ def value_and_clipped_grad_vectorized(
     return vmap_reducer.reduce(vectorized_value_and_grad, *placeholder_args)
 
   return grad_fn
-
-
-def datalens_pruning(
-  pruning_k: chex.Array,
-) -> PruningFn:
-  def pruning_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
-    tree_value, tree_def=jax.tree_flatten(grad)
-    tree_value=map(leaves_pruning, tree_value)
-    # tree_value=jax.vmap(lambda x: leaves_pruning(x))(tree_value)
-    tree_output=jax.tree_unflatten(tree_def, tree_value)
-    return tree_output
-
-
-  def leaves_pruning(leaves):
-    grad_norm = optax.global_norm(leaves)**2
-    target_norm = grad_norm * (1-pruning_k)
-    cumnorm=jnp.cumsum(jnp.sort((jnp.abs(leaves)).flatten()) ** 2)
-    k_count=jnp.sum(cumnorm < target_norm) + 1   ##maybe error if k=1 
-    quantile=jnp.percentile(jnp.abs(leaves), k_count * 100 / jnp.size(cumnorm)  )
-    return jax.tree_util.tree_map(lambda x: x * get_mask(x, quantile), leaves)
-
-  def get_mask(x, quantile):
-    return  jnp.where(jnp.abs(x) > quantile, jnp.ones_like(x), jnp.zeros_like(x))
-
-  return pruning_fn
-
-
-
-
-

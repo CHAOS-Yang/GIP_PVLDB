@@ -79,6 +79,10 @@ def get_config(config):
                       # * 'num_updates'
                       # Set to `None` to deactivate auto-tunning
                       auto_tune=None,
+                      per_example_pruning_amount=30,  ##(%)   cant be 100
+                      batch_pruning_amount=100,  ##(#)
+                      datalens_pruning=False,
+                      batch_pruning_method="None",
                       ),
                   logging=dict(
                       grad_clipping=True,

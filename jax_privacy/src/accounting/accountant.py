@@ -110,3 +110,16 @@ class Accountant:
       )
     else:
       return float('inf')
+
+  def compute_target_sigma(self, num_updates: int) -> float:
+    """Compute DP std_relative given the DP parameters and current `num_updates`."""
+    if self.finite_dp_guarantee():
+      return calibrate.calibrate_noise_multiplier(
+          target_epsilon=self._dp_epsilon,
+          num_steps=num_updates,
+          batch_sizes=self._batch_sizes,
+          num_examples=self._num_samples,
+          target_delta=self._dp_delta,
+      )
+    else:
+      return 0

@@ -71,6 +71,7 @@ def get_config(config):
                   dp=dict(
                       target_delta=1e-5,
                       clipping_norm=1.0,  # float('inf') or None to deactivate
+                      pruning_amount=0.9,
                       stop_training_at_epsilon=1.0,  # None,
                       rescale_to_unit_norm=True,
                       noise=dict(

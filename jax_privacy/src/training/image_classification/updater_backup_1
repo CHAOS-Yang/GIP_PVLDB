@@ -41,34 +41,24 @@ Typical usage:
   )
 """
 
-# from ast import Try
-from cProfile import label
 import functools
-# from tkinter import S
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 import chex
 import haiku as hk
 import jax
 import jax.numpy as jnp
-
 from jax_privacy.src.training import batching as batching_module
-from jax_privacy.src.training import grad_clipping, mallows_model_256
+from jax_privacy.src.training import grad_clipping
 from jax_privacy.src.training import optim
-from jax_privacy.src.training import cos_sim
 from jaxline import utils
 import optax
-from typing import Callable
+
 
 Model = hk.TransformedWithState
 InitFn = Any
 ForwardFn = Any
 
-
-Aux = chex.ArrayTree
-Params = chex.ArrayTree
-GradParams = Params
-PruningFn = Callable[[GradParams], Tuple[GradParams, Aux]]
 
 class Updater:
   """Defines and applies the update, potentially in parallel across devices."""
@@ -93,18 +83,7 @@ class Updater:
       log_snr_per_layer: bool = False,
       log_grad_clipping: bool = False,
       log_grad_alignment: bool = False,
-      per_example_pruning_amount: Optional[chex.Numeric],
-      batch_pruning_amount: Optional[chex.Numeric],
-      pruning_eps_step: Optional[chex.Numeric],
-      # paramsNum: Optional[chex.Numeric],
-
-      max_step: Optional[chex.Numeric],
-      batch_pruning_method = "Random",   #TopK Random
-
-      datalens_pruning: bool = False,
-      datalens_k: Optional[chex.Numeric] = 0.8,
-
-
+      pruning_amount: Optional[chex.Numeric],
   ):
     """Initializes the updater.
 
@@ -148,16 +127,9 @@ class Updater:
         distance between the differentially private gradients and the
         non-private gradients computed on the same data.
     """
-    self.random_key=jax.random.PRNGKey(3407)
-    self.quantile=None
     self.batching = batching
     self._train_init = train_init
     self._forward = forward
-
-
-    ##datalens
-    self._datalens_pruning = datalens_pruning
-    self._datalens_k=datalens_k
 
     self._clipping_norm = clipping_norm
     self._noise_std_relative = noise_std_relative
@@ -176,29 +148,7 @@ class Updater:
     self._log_grad_clipping = log_grad_clipping
     self._log_grad_alignment = log_grad_alignment
 
-    self._per_example_pruning_amount = per_example_pruning_amount
-    self._batch_pruning_amount= batch_pruning_amount
-    self._batch_pruning_method=batch_pruning_method
-    self.paramsNum=None
-    self.group_num=None
-    self.change_num_list = None #jnp.load('/home/jungang/jax_privacy/jax_privacy/src/training/change_num_list.npy')
-    self.steps = 0
-
-    self.error = None
-    
-
-    self.max_step=max_step
-
-    self._random_key=jax.random.PRNGKey(42)
-   
-
-    self.batch_pruningFn=None
-    # if self._batch_pruning_method == 'TopK':
-    #   self.batch_pruningFn = self.batch_pruning_top_k(self._batch_pruning_amount)
-    # elif self._batch_pruning_method == 'Random':
-    #   self.batch_pruningFn = self.batch_pruning_random(self._batch_pruning_amount, self._random_key)
-    # else:
-    #   print('Batch pruning skipped')
+    self._pruning_amount = pruning_amount
 
     if (clipping_norm in (float('inf'), None) and
         rescale_to_unit_norm):
@@ -216,12 +166,10 @@ class Updater:
               clipping_norm=clipping_norm,
               rescale_to_unit_norm=rescale_to_unit_norm,
           ),
-          ##
-          # pruning_fn=grad_clipping.pruning(
-          #     pruning_amount=20,    
-          # ),
+          pruning_fn=grad_clipping.pruning(
+              pruning_amount=100,    #
+          ),
       )
-    self.pruning_eps_step = pruning_eps_step
 
   def _regularization(self, params: chex.ArrayTree) -> chex.Array:
     l2_loss = optim.l2_loss(params)
@@ -254,8 +202,6 @@ class Updater:
       rng_key: chex.PRNGKey,
   ) -> Tuple[chex.ArrayTree, chex.ArrayTree, chex.ArrayTree]:
     """Initialization function (to be pmapped)."""
-    # print('label_2')
-    # print('inputsss_2', inputs)
     params, network_state = self._train_init(rng_key, inputs)
 
     trainable_params, unused_frozen_params = hk.data_structures.partition(
@@ -279,15 +225,11 @@ class Updater:
       global_step: chex.Array,
       inputs: chex.ArrayTree,
       rng: chex.PRNGKey,
-      #mode: chex.Array,
   ) -> Tuple[chex.ArrayTree, chex.ArrayTree, chex.ArrayTree, Any]:
     """Perform the pmapped update."""
     # The function below is p-mapped, so arguments must be provided without name
     # and in the right order, hence why we define this method, which has to be
     # called with named arguments in order to avoid any mistake.
-    # opt_update(global_step, grad(loss)(params, batch), opt_state)
-    
-    
     return self._pmapped_update(
         params,
         network_state,
@@ -297,106 +239,6 @@ class Updater:
         rng,
         utils.host_id_devices_for_rng(),
     )
-  
-  def batch_pruning_top_k(  
-    self,
-    batch_pruning_amount: chex.Array,
-    theta: chex.Array,
-    # N: chex.Array,
-    # list_len: int,
-  ) -> PruningFn:
-
-    def pruning_fn(grad, grad_mask: GradParams) -> Tuple[GradParams, Aux]:
-      tree_value, tree_def=jax.tree_util.tree_flatten(grad)
-      tree_mask_value, tree_mask_def=jax.tree_util.tree_flatten(grad_mask)
-      tree_value=map(leaves_pruning, tree_value, tree_mask_value)
-      tree_output=jax.tree_util.tree_unflatten(tree_def,tree_value)
-      return tree_output
-
-    def leaves_pruning(leaves, mask_leaves):
-      quantile=jnp.percentile(jnp.abs(jnp.array(mask_leaves)), 100-batch_pruning_amount)
-      return jax.tree_util.tree_map(lambda x, y: x * get_mask(y, quantile), leaves, mask_leaves)
-  
-    def get_mask(y, quantile):
-      mask_0 = jnp.where(jnp.abs(y) > quantile, jnp.ones_like(y), jnp.zeros_like(y))
-      mask_mod = self.mallows_mode.model(mask=mask_0, theta=theta, pruning_amount=batch_pruning_amount)
-      return  mask_mod
-
-    return pruning_fn
-
-  def batch_pruning_topk_split(  
-    self,
-    batch_pruning_amount: chex.Array,
-    theta: chex.Array,
-  ) -> PruningFn:
-
-    def pruning_fn(grad, grad_mask: GradParams) -> Tuple[GradParams, Aux]:
-      # tree_value, tree_def=jax.tree_util.tree_flatten(grad)
-      tree_mask_value, tree_mask_def=jax.tree_util.tree_flatten(grad_mask)
-      # print('mask_leaves', tree_mask_def)
-      tree_mask_value= map(leaves_split, tree_mask_value)
-      tree_output=jax.tree_util.tree_unflatten(tree_mask_def, tree_mask_value)
-      # del tree_value, tree_mask_value, tree_def, tree_mask_def
-      return jax.tree_util.tree_map(lambda x, y: x*y, tree_output, grad)
-
-    def leaves_split(mask_leaves):
-      mask = mask_leaves.reshape(-1)
-      mask = self.mallows_mode.model(mask, batch_pruning_amount)
-      return mask.reshape(mask_leaves.shape)
-
-    return pruning_fn
-
-  def batch_pruning_random(  
-    self,
-    batch_pruning_amount: chex.Array,
-  ) -> PruningFn:
-
-    def pruning_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
-      tree_value, tree_def=jax.tree_util.tree_flatten(grad)
-      tree_value=map(leaves_pruning,tree_value)
-      tree_output=jax.tree_util.tree_unflatten(tree_def,tree_value)
-      return tree_output
-
-    def leaves_pruning(leaves):
-      random_grad = jax.random.normal(self.random_key,jnp.shape(leaves))
-      quantile=jnp.percentile(jnp.abs(random_grad), 100-batch_pruning_amount)
-      self.quantile=quantile
-      return jax.tree_util.tree_map(lambda x: x * get_mask(random_grad, quantile), leaves)
-  
-    def get_mask(x, quantile):
-      return jnp.where(jnp.abs(x)> quantile, jnp.ones_like(x), jnp.zeros_like(x))
-
-    return pruning_fn
-
-  def batch_pruning_random_split(  
-    self,
-    batch_pruning_amount: chex.Array,
-  ) -> PruningFn:
-
-    def pruning_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
-      tree_value, tree_def=jax.tree_util.tree_flatten(grad)
-      tree_value=map(leaves_split, tree_value)
-      tree_output=jax.tree_util.tree_unflatten(tree_def, tree_value)
-      return tree_output
-
-    def leaves_split(leaves) :
-      split_leaves = jnp.array_split(leaves.reshape(-1), leaves.size // 256 + 1)
-      for i in range(leaves.size // 256 + 1) :
-        split_leaves[i] = leaves_pruning(split_leaves[i])
-      return jnp.concatenate(split_leaves).reshape(leaves.shape)
-
-    def leaves_pruning(leaves):
-  
-      return jax.tree_util.tree_map(lambda x: x * get_mask(x), leaves)
-
-    def get_mask(x):
-      random_grad = jax.random.normal(self.random_key, jnp.shape(x))
-      quantile=jnp.percentile(jnp.abs(random_grad), 100-batch_pruning_amount)
-      # self.quantile=quantile
-      return jnp.where(jnp.abs(random_grad)> quantile, jnp.ones_like(x), jnp.zeros_like(x))
-
-    return pruning_fn
-
 
   @functools.partial(jax.pmap, static_broadcasted_argnums=0, axis_name='i')
   def _pmapped_update(
@@ -408,7 +250,6 @@ class Updater:
       inputs: chex.ArrayTree,
       rng: chex.PRNGKey,
       host_id: Optional[chex.Array],
-      #mode: chex.Array,
   ) -> Tuple[chex.ArrayTree, chex.ArrayTree, chex.ArrayTree, Any]:
     """Updates parameters."""
     # Note on rngs:
@@ -435,41 +276,9 @@ class Updater:
     # Compute clipped-per-example gradients of the loss function (w.r.t. the
     # trainable parameters only).
     forward = functools.partial(self._forward, frozen_params=frozen_params)
-
-
-    #linear_pa
-    #num1=(1-0.49*global_step/self.max_step)*100
-    #if mode:
-
-    # else :
-    #   (loss, (network_state, metrics,
-    #     loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=grad_clipping.pruning(pruning_amount=50))(
-    #     params, inputs, network_state, rng_device)
-    # (loss, (network_state, metrics,
-    #     loss_vector)), device_grads = self.value_and_clipped_grad(forward)(
-    #         params, inputs, network_state, rng_device)
-
-
-    # if LPA
-
-    if self._datalens_pruning:
-      (loss, (network_state, metrics,
-        loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=grad_clipping.datalens_pruning(self._datalens_k))(
-        params, inputs, network_state, rng_device)
-      print('datalens works')
-    else:
-      # print('inputshape')
-      # print(inputs['images'].shape, inputs['labels'].shape)
-      (loss, (network_state, metrics,
-        loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=None)(
-            params, inputs, network_state, rng_device)
-      print('datalens not works')
-
-    
-    # else:
-    #   (loss, (network_state, metrics,
-    #           loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=grad_clipping.pruning(pruning_amount=(1-0.5*global_step/self.max_step)*100))(
-    #           params, inputs, network_state, rng_device)
+    (loss, (network_state, metrics,
+            loss_vector)), device_grads = self.value_and_clipped_grad(forward)(
+                params, inputs, network_state, rng_device)
 
     if self._using_clipped_grads:
       device_grads, grad_norms_per_sample = device_grads
@@ -483,10 +292,6 @@ class Updater:
     loss_all = jax.lax.all_gather(loss_vector, axis_name='i')
     loss_vector = jnp.reshape(loss_all, [-1])
 
-    ##datalens 
-    # datalens_pruningfn=grad_clipping.datalens_pruning(self._datalens_k)
-    # avg_grads1=datalens_pruningfn(avg_grads)
-
     # Compute the regularization and its corresponding gradients. Since those
     # are data-independent, there is no need to privatize / clip them.
     (reg, l2_loss), reg_grads = jax.value_and_grad(
@@ -495,102 +300,52 @@ class Updater:
     # Compute the noise scale based on `noise_std_relative`, the batch-size and
     # the clipping-norm. Here the noise is created by being added to a structure
     # of zeros mimicking the gradients structure.
-
-    if self._datalens_pruning:
-      noise, std = optim.add_noise_to_grads(
-          clipping_norm=self._clipping_norm * self._datalens_k,
-          rescale_to_unit_norm=self._rescale_to_unit_norm,
-          noise_std_relative=self._noise_std_relative,
-          apply_every=self.batching.apply_update_every(global_step),
-          total_batch_size=self.batching.batch_size(global_step),
-          grads=jax.tree_util.tree_map(jnp.zeros_like, avg_grads),
-          rng_key=rng_common,
-      )
-    else:
-      noise, std = optim.add_noise_to_grads(
+    noise, std = optim.add_noise_to_grads(
         clipping_norm=self._clipping_norm,
         rescale_to_unit_norm=self._rescale_to_unit_norm,
         noise_std_relative=self._noise_std_relative,
         apply_every=self.batching.apply_update_every(global_step),
         total_batch_size=self.batching.batch_size(global_step),
-        grads=jax.tree_util.tree_map(jnp.zeros_like, avg_grads),
+        grads=jax.tree_map(jnp.zeros_like, avg_grads),
         rng_key=rng_common,
-      )
-
+    )
 
     # Compute our 'final' gradients `grads`: these comprise the clipped
     # data-dependent gradients (`avg_grads`), the regularization gradients
     # (`reg_grads`) and the noise to be added to achieved differential privacy
     # (`noise`).
-    grads = jax.tree_util.tree_map(
+    grads = jax.tree_map(
         lambda *args: sum(args),
         avg_grads,
         reg_grads,
         noise,
     )
-
-    if self._batch_pruning_method == 'TopK':
-      #self.batch_pruningFn = self.batch_pruning_top_k(jnp.max(((1-0.9*global_step/self.max_step)*100)[0],50))    #LBPA
-      # if mode:
-      def get_netNum(params):
-        leaves_value, structure = jax.tree_util.tree_flatten(params)
-        group_num = 0
-        num = 0
-        for leave in leaves_value:
-          num += jnp.size(leave)
-          # print(leave.shape)
-          group_num += jnp.ceil(jnp.size(leave) / 256.)
-        return num, group_num
-      if self.paramsNum is None:
-        self.paramsNum, self.group_num = get_netNum(grads)
-      # # list_len = 100#jnp.array((paramsNum/256+1), int)
-      linear_pruning_amount = 99.9 - (99.9 - self._batch_pruning_amount)*global_step/self.max_step
-      theta = self.pruning_eps_step / (self.paramsNum  * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100)
-      # theta = 0.1
-      self.mallows_mode=mallows_model_256.MallowsModel(256, theta, self._batch_pruning_amount)
-      self.batch_pruningFn = self.batch_pruning_topk_split(linear_pruning_amount, theta)
-      # else :
-      #   self.batch_pruningFn = self.batch_pruning_top_k(50)
-      # self.batch_pruningFn = self.batch_pruning_top_k(20)
-      grads=self.batch_pruningFn(grads, avg_grads)
-      # cos = cos_sim.cos_sim(grads, avg_grads)
-      print('pruning finished')
-    elif self._batch_pruning_method == 'Random':
-      self.batch_pruningFn = self.batch_pruning_random(99.9 - jnp.exp(jnp.log(99.9 - self._batch_pruning_amount)*global_step/self.max_step))   
-      grads=self.batch_pruningFn(grads)
-      # cos = cos_sim.cos_sim(grads, avg_grads)
-      print('pruning finished')
-    else:
-      # if self._datalens_pruning:
-      #   cos = 0
-      # else:
-      #   cos = cos_sim.cos_sim(grads, avg_grads)
-      print('Batch pruning skipped')
-
-
-    # linear_batch_pa
-
-
     #print(jax.tree_structure(grads))
      
+    
     #sample_array=jnp.array(grad_norms_per_sample)
-
-    # datalens_pruningfn=grad_clipping.datalens_pruning(self._datalens_k)
-    # datalens_pruningfn=grad_clipping.pruning(40)
-
-    # avg_grads1=datalens_pruningfn(avg_grads)
-
-    # grad_leaves=jax.tree_util.tree_leaves(avg_grads)
-    # grad_array=grad_leaves[0]
-    # grad_leaves=jax.tree_util.tree_leaves(avg_grads1)
-    # grad_array1=grad_leaves[0]
-
-    # grad_array=None
+    
+    # grad_e9=0
+    # grad_e8=0
+    # grad_e7=0
     # for i in range(len(grad_leaves)):
-    #   if grad_array==None:
-    #     grad_array=jnp.array(grad_leaves[i])
-    #   else:
-    #     grad_array=jnp.append(grad_array,jnp.array(grad_leaves[i]))
+    #   grad_e9=grad_e9+jnp.sum(jnp.abs(jnp.array(grad_leaves[i]))<1e-9)
+    #   grad_e8=grad_e8+jnp.sum(jnp.abs(jnp.array(grad_leaves[i]))<1e-8)
+    #   grad_e7=grad_e7+jnp.sum(jnp.abs(jnp.array(grad_leaves[i]))<1e-7)
+    #   grad_e7=jnp.sum(jnp.abs(jnp.array(grad_leaves[i]))==0)
+
+    #grad_e9=jax.lax.pmean(grad_e9, axis_name='i')
+    #grad_e8=jax.lax.pmean(grad_e8, axis_name='i')
+    #grad_e7=jax.lax.pmean(grad_e7, axis_name='i')
+
+    grad_leaves=jax.tree_leaves(device_grads)
+    grad_array=None
+    for i in range(len(grad_leaves)):
+      if grad_array==None:
+        grad_array=jnp.array(grad_leaves[i])
+      else:
+        #grad_array.append((jnp.array(grad_leaves[i])))
+        grad_array=jnp.append(grad_array,jnp.array(grad_leaves[i]))
 
     # Compute the learning-rate according to its schedule. Note that the
     # schedule evolves with `update_step` rather than `global_step` since the
@@ -631,6 +386,10 @@ class Updater:
         train_obj=(reg + loss),
         grads_norm=optax.global_norm(grads),
         update_step=update_step,
+
+        #grad_e9=grad_e9,
+        #grad_e8=grad_e8,
+        #grad_e7=grad_e7,
     )
 
     scalars.update(metrics)
@@ -659,8 +418,7 @@ class Updater:
     # remain frozen during training.
     new_params = hk.data_structures.merge(new_params, frozen_params)
 
-
-    return new_params, network_state, opt_state, scalars
+    return new_params, network_state, opt_state, scalars, grad_array
 
   def _compute_grad_alignment(
       self,
@@ -685,7 +443,7 @@ class Updater:
     #1e7+ grad
 
     # gradients: normalized accumulated gradients + reg gradient
-    clean_grads = jax.tree_util.tree_map(
+    clean_grads = jax.tree_map(
         lambda x1, x2: x1 + x2,
         avg_clean_grads,
         reg_grads,
@@ -717,7 +475,7 @@ class Updater:
           optax.global_norm(avg_grads) / optax.global_norm(noise))
 
     if self._log_snr_per_layer:
-      signal_to_noise_per_layer = jax.tree_util.tree_map(
+      signal_to_noise_per_layer = jax.tree_map(
           lambda x1, x2: jnp.linalg.norm(x1) / jnp.linalg.norm(x2),
           avg_grads,
           noise,
