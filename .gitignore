@@ -145,3 +145,5 @@ static
 experiments/image_classification/~
 result
 experiments/image_classification/result
+jax_privacy/log/
+experiments/image_classification/configs/
