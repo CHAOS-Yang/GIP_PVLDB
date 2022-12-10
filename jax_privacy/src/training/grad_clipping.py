@@ -110,7 +110,7 @@ def global_clipping(
     coeff = jnp.where(clipping_norm > eps, coeff_fn(grad_norm), jnp.nan)
     #quantile = jnp.percentile(coeff,10)
     
-    return jax.tree_util.tree_map(lambda x: x * coeff, grad), grad_norm
+    return jax.tree_util.tree_map(lambda x: x * coeff, grad), grad_norm, grad
 
   return clipping_fn
 

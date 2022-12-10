@@ -185,6 +185,9 @@ class Updater:
     self.steps = 0
 
     self.error = None
+    self.error_clip_norm = 0.05
+    self.error_std = 10.0
+    self.error_norm = 0.0
     
 
     self.max_step=max_step
@@ -193,12 +196,6 @@ class Updater:
    
 
     self.batch_pruningFn=None
-    # if self._batch_pruning_method == 'TopK':
-    #   self.batch_pruningFn = self.batch_pruning_top_k(self._batch_pruning_amount)
-    # elif self._batch_pruning_method == 'Random':
-    #   self.batch_pruningFn = self.batch_pruning_random(self._batch_pruning_amount, self._random_key)
-    # else:
-    #   print('Batch pruning skipped')
 
     if (clipping_norm in (float('inf'), None) and
         rescale_to_unit_norm):
@@ -337,7 +334,7 @@ class Updater:
       tree_mask_value= map(leaves_split, tree_mask_value)
       tree_output=jax.tree_util.tree_unflatten(tree_mask_def, tree_mask_value)
       # del tree_value, tree_mask_value, tree_def, tree_mask_def
-      return jax.tree_util.tree_map(lambda x, y: x*y, tree_output, grad)
+      return jax.tree_util.tree_map(lambda x, y: x*y, tree_output, grad), jax.tree_util.tree_map(lambda x, y: x*y, tree_output, grad_mask)
 
     def leaves_split(mask_leaves):
       mask = mask_leaves.reshape(-1)
@@ -472,14 +469,15 @@ class Updater:
     #           params, inputs, network_state, rng_device)
 
     if self._using_clipped_grads:
-      device_grads, grad_norms_per_sample = device_grads
+      device_grads, grad_norms_per_sample, origin_grads = device_grads
     else:
       grad_norms_per_sample = None
+      origin_grads = device_grads
 
 
     # Synchronize metrics and gradients across devices.
-    loss, metrics, avg_grads = jax.lax.pmean(
-        (loss, metrics, device_grads), axis_name='i')
+    loss, metrics, avg_grads, avgori_grads = jax.lax.pmean(
+        (loss, metrics, device_grads, origin_grads), axis_name='i')
     loss_all = jax.lax.all_gather(loss_vector, axis_name='i')
     loss_vector = jnp.reshape(loss_all, [-1])
 
@@ -516,6 +514,18 @@ class Updater:
         grads=jax.tree_util.tree_map(jnp.zeros_like, avg_grads),
         rng_key=rng_common,
       )
+      if self.error is None:
+        error_noise = None
+      else:
+        error_noise, error_std = optim.add_noise_to_grads(
+          clipping_norm=self.error_clip_norm,
+          rescale_to_unit_norm=self._rescale_to_unit_norm,
+          noise_std_relative=self.error_std,
+          apply_every=self.batching.apply_update_every(global_step),
+          total_batch_size=self.batching.batch_size(global_step),
+          grads=jax.tree_util.tree_map(jnp.zeros_like, self.error),
+          rng_key=rng_common,
+        )
 
 
     # Compute our 'final' gradients `grads`: these comprise the clipped
@@ -549,10 +559,21 @@ class Updater:
       # theta = 0.1
       self.mallows_mode=mallows_model_256.MallowsModel(256, theta, self._batch_pruning_amount)
       self.batch_pruningFn = self.batch_pruning_topk_split(linear_pruning_amount, theta)
-      # else :
-      #   self.batch_pruningFn = self.batch_pruning_top_k(50)
-      # self.batch_pruningFn = self.batch_pruning_top_k(20)
-      grads=self.batch_pruningFn(grads, avg_grads)
+
+      grads, clipped_compress_grads=self.batch_pruningFn(grads, avg_grads)
+      # if self.error is not None:
+      self.error = jax.tree_util.tree_map(lambda x, y: x - y, avg_grads, clipped_compress_grads)
+      self.error_norm = optax.global_norm(self.error)
+      # clip_fator = jnp.minimum(1.0, self.error_clip_norm / self.error_norm)
+      self.error = jax.tree_util.tree_map(lambda x: x * self.error_clip_norm, self.error)
+      if self.error is not None and error_noise is not None:
+        error_noise = jax.tree_util.tree_map(lambda x, y: jnp.where(y==0, y, x), error_noise, self.error)
+        grads = jax.tree_util.tree_map(
+            lambda *args: sum(args),
+            grads,
+            self.error,
+            error_noise,
+        )
       # cos = cos_sim.cos_sim(grads, avg_grads)
       print('pruning finished')
     elif self._batch_pruning_method == 'Random':
@@ -631,6 +652,8 @@ class Updater:
         train_obj=(reg + loss),
         grads_norm=optax.global_norm(grads),
         update_step=update_step,
+        error_norm=self.error_norm,
+        avg_grads_norm=optax.global_norm(avgori_grads),
     )
 
     scalars.update(metrics)

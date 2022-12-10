@@ -95,12 +95,12 @@ class ShapeEvaluator:
     batch_size = jax.tree_leaves(inputs)[0].shape[0]
     out, grads = jax.eval_shape(
         self._grad_fn, params, inputs, network_state, rng)
-    grads, aux = jax.eval_shape(self._clipping_fn, grads)
+    grads, aux, origin_grads = jax.eval_shape(self._clipping_fn, grads)
     # The auxiliary output of `clipped_fn` is always vectorized so that we
     # can log statistics per sample.
     vectorize = lambda x: jax.lax.broadcast(x, (batch_size,))
     aux = jax.eval_shape(lambda tree: jax.tree_map(vectorize, tree), aux)
-    return out, (grads, aux)
+    return out, (grads, aux, origin_grads)
 
   def vectorized_shapes(self, params, inputs, network_state, rng):
     """Evaluate the expected shapes when vectorizing the gradient."""
