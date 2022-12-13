@@ -101,6 +101,7 @@ def global_clipping(
 
   def clipping_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
     grad_norm = optax.global_norm(grad)
+    # print("************************", clipping_norm)
     # If the value of `eps` is invalid because it is too large compared to
     # `clipping_norm`, propagate NaNs to show that the computation is invalid.
     # Note: this has the side effect of always back-propagating NaNs if we
@@ -145,6 +146,7 @@ def pruning(  ##
 def _value_and_clipped_grad_single_sample(     #no pruning
     forward_fn: LossFn,
     clipping_fn: ClippingFn,
+    clipping_error_fn: ClippingFn,
 ) -> GradFn:
   """Create a function that computes a clipped gradient for a single sample.
 
@@ -163,6 +165,7 @@ def _value_and_clipped_grad_single_sample(     #no pruning
       inputs: Inputs,
       network_state: ModelState,
       rng: chex.PRNGKey,
+      mask: Params,
   ) -> Tuple[Tuple[Loss, Aux], Tuple[GradParams, Aux]]:
     # Add a batch-size dimension.
     inputs_expanded = jax.tree_util.tree_map(
@@ -173,9 +176,13 @@ def _value_and_clipped_grad_single_sample(     #no pruning
     # Compute the gradient.
     out, grad = jax.value_and_grad(forward_fn, has_aux=True)(
         params, inputs_expanded, network_state, rng)
+    
+    pruned_grad = jax.tree_util.tree_map(lambda x,y: x * y, grad, mask)
+
+    error = jax.tree_util.tree_map(lambda x,y: x * (1-y), grad, mask)
 
     # Apply the clipping function
-    return out, clipping_fn(grad)
+    return out, clipping_fn(pruned_grad), clipping_error_fn(error)
 
   return grad_fn
 
@@ -292,7 +299,7 @@ def value_and_clipped_grad_loop(
 def value_and_clipped_grad_vectorized(
     forward_fn: LossFn,
     clipping_fn: ClippingFn,
-    pruning_fn: PruningFn=None,
+    clipping_error_fn: ClippingFn=None,
 ) -> GradFn:
   """Create a function that computes grads clipped per example using vmapping.
 
@@ -309,27 +316,28 @@ def value_and_clipped_grad_vectorized(
   Returns:
     Function that clips gradient per-example and average them.
   """
-  if pruning_fn is not None:
-    grad_fn_single_sample = _value_and_clipped_pruned_grad_single_sample(  ##
-        forward_fn=forward_fn,
-        clipping_fn=clipping_fn,
-        pruning_fn=pruning_fn,
-    )
-  else:
-    grad_fn_single_sample = _value_and_clipped_grad_single_sample(  ##
-        forward_fn=forward_fn,
-        clipping_fn=clipping_fn,
-    )
+  # if pruning_fn is not None:
+  #   grad_fn_single_sample = _value_and_clipped_pruned_grad_single_sample(  ##
+  #       forward_fn=forward_fn,
+  #       clipping_fn=clipping_fn,
+  #       pruning_fn=pruning_fn,
+  #   )
+  # else:
+  grad_fn_single_sample = _value_and_clipped_grad_single_sample(  ##
+      forward_fn=forward_fn,
+      clipping_fn=clipping_fn,
+      clipping_error_fn=clipping_error_fn,
+  )
 
 
   grad_fn_vectorized = jax.vmap(
       grad_fn_single_sample,
-      in_axes=(None, 0, None, None),
+      in_axes=(None, 0, None, None, None),
   )
 
   vmap_reducer = grad_clipping_utils.VmapReducer(    ###???
       grad_clipping_utils.ShapeEvaluator(
-          forward_fn, clipping_fn, grad_fn_vectorized),
+          forward_fn, clipping_fn, clipping_error_fn, grad_fn_vectorized),
   )
 
   def grad_fn(
@@ -337,16 +345,17 @@ def value_and_clipped_grad_vectorized(
       inputs: Inputs,
       network_state: ModelState,
       rng: chex.PRNGKey,
+      mask: Params,
   ) -> Tuple[Tuple[Loss, Aux], Tuple[GradParams, Aux]]:
 
     # Compute vectorized outputs and clipped gradients.
     # print(inputs.shape)
     vectorized_value_and_grad = grad_fn_vectorized(
-        params, inputs, network_state, rng)
+        params, inputs, network_state, rng, mask)
 
     # We only need to know the shape and dtype for the reduction, so we pass
     # the arguments through `_placeholder_like` to make that clear.
-    placeholder_args = _placeholder_like(params, inputs, network_state, rng)
+    placeholder_args = _placeholder_like(params, inputs, network_state, rng, mask)
     return vmap_reducer.reduce(vectorized_value_and_grad, *placeholder_args)
 
   return grad_fn

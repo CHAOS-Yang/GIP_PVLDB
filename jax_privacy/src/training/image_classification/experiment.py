@@ -122,6 +122,7 @@ class Experiment(experiment.AbstractExperiment):
     self.num_training_samples = self.config.data.dataset.train.num_samples
     self.same_step = True
     self.index_noise_weight = 0.01
+    self.error_noise_weight = 0
 
     
       
@@ -145,8 +146,8 @@ class Experiment(experiment.AbstractExperiment):
         scale_schedule=scale_schedule,
     )
 
-    if self.config.training.dp.batch_pruning_method=="TopK" and self.same_step==False:
-      noise_eps = self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight)
+    if "TopK" in self.config.training.dp.batch_pruning_method and self.same_step==False:
+      noise_eps = self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight - self.error_noise_weight)
     else:
       noise_eps = self.config.training.dp.stop_training_at_epsilon
       
@@ -165,12 +166,14 @@ class Experiment(experiment.AbstractExperiment):
     else:
       self._max_num_updates = self.config.num_updates
 
-    if self.config.training.dp.batch_pruning_method=="TopK":
+    if "TopK" in self.config.training.dp.batch_pruning_method:
       pruning_eps = self.config.training.dp.stop_training_at_epsilon * self.index_noise_weight
       pruning_eps_step = pruning_eps / self._max_num_updates / self.config.training.batch_size.init_value * self.num_training_samples
       if self.same_step==True:
-        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight)
+        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight - self.error_noise_weight)
         sigma=self.accountant.compute_target_sigma(self._max_num_updates) #compute sigma from 0.9eps and the max_steps
+        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * self.error_noise_weight
+        error_sigma = self.accountant.compute_target_sigma(self._max_num_updates)
       else:
         sigma=self.config.training.dp.noise.std_relative
     else:
@@ -214,6 +217,7 @@ class Experiment(experiment.AbstractExperiment):
         datalens_pruning=self.config.training.dp.datalens_pruning,
         max_step=self._max_step,
         pruning_eps_step=pruning_eps_step,
+        error_sigma=error_sigma,
         # paramsNum=paramsNum,
     )
 

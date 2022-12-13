@@ -60,6 +60,8 @@ from jaxline import utils
 import optax
 from typing import Callable
 
+import ipdb
+
 Model = hk.TransformedWithState
 InitFn = Any
 ForwardFn = Any
@@ -100,6 +102,7 @@ class Updater:
 
       max_step: Optional[chex.Numeric],
       batch_pruning_method = "Random",   #TopK Random
+      error_sigma: Optional[chex.Numeric],
 
       datalens_pruning: bool = False,
       datalens_k: Optional[chex.Numeric] = 0.8,
@@ -185,9 +188,11 @@ class Updater:
     self.steps = 0
 
     self.error = None
-    self.error_clip_norm = 0.05
-    self.error_std = 10.0
+    self.error_clip_norm = 0.1
+    self.error_std = 0
     self.error_norm = 0.0
+    self.clipped_error_norm = 0.0
+    self.mask = None
     
 
     self.max_step=max_step
@@ -207,12 +212,17 @@ class Updater:
           jax.value_and_grad, has_aux=True)
     else:
       self._using_clipped_grads = True
+      error_clipping_fn = grad_clipping.global_clipping(
+              clipping_norm=self.error_clip_norm,
+              rescale_to_unit_norm=rescale_to_unit_norm,
+          )
       self.value_and_clipped_grad = functools.partial(
           grad_clipping.value_and_clipped_grad_vectorized,
           clipping_fn=grad_clipping.global_clipping(
               clipping_norm=clipping_norm,
               rescale_to_unit_norm=rescale_to_unit_norm,
           ),
+          clipping_error_fn=error_clipping_fn,
           ##
           # pruning_fn=grad_clipping.pruning(
           #     pruning_amount=20,    
@@ -298,26 +308,23 @@ class Updater:
   def batch_pruning_top_k(  
     self,
     batch_pruning_amount: chex.Array,
-    theta: chex.Array,
-    # N: chex.Array,
-    # list_len: int,
   ) -> PruningFn:
 
-    def pruning_fn(grad, grad_mask: GradParams) -> Tuple[GradParams, Aux]:
-      tree_value, tree_def=jax.tree_util.tree_flatten(grad)
+    def pruning_fn(grad_mask: GradParams) -> Tuple[GradParams, Aux]:
+      # tree_value, tree_def=jax.tree_util.tree_flatten(grad)
       tree_mask_value, tree_mask_def=jax.tree_util.tree_flatten(grad_mask)
-      tree_value=map(leaves_pruning, tree_value, tree_mask_value)
-      tree_output=jax.tree_util.tree_unflatten(tree_def,tree_value)
+      # print('mask_leaves', tree_mask_def)
+      tree_mask_value= map(leaves_split, tree_mask_value)
+      tree_output=jax.tree_util.tree_unflatten(tree_mask_def, tree_mask_value)
+      # del tree_value, tree_mask_value, tree_def, tree_mask_def
       return tree_output
 
-    def leaves_pruning(leaves, mask_leaves):
-      quantile=jnp.percentile(jnp.abs(jnp.array(mask_leaves)), 100-batch_pruning_amount)
-      return jax.tree_util.tree_map(lambda x, y: x * get_mask(y, quantile), leaves, mask_leaves)
-  
-    def get_mask(y, quantile):
-      mask_0 = jnp.where(jnp.abs(y) > quantile, jnp.ones_like(y), jnp.zeros_like(y))
-      mask_mod = self.mallows_mode.model(mask=mask_0, theta=theta, pruning_amount=batch_pruning_amount)
-      return  mask_mod
+    def leaves_split(mask_leaves):
+      mask = mask_leaves.reshape(-1)
+      quantile=jnp.percentile(jnp.abs(mask), 100-batch_pruning_amount)
+      mask = jnp.where(jnp.abs(mask)> quantile, 1, 0)
+      # mask = self.mallows_mode.model(mask, batch_pruning_amount)
+      return mask.reshape(mask_leaves.shape)
 
     return pruning_fn
 
@@ -431,23 +438,49 @@ class Updater:
 
     # Compute clipped-per-example gradients of the loss function (w.r.t. the
     # trainable parameters only).
-    forward = functools.partial(self._forward, frozen_params=frozen_params)
+    def get_sum(mask):
+        leaves_value, structure = jax.tree_util.tree_flatten(mask)
+        sum = 0
+        for leave in leaves_value:
+          sum += jnp.sum(leave)
+        return sum
+
+    if self._batch_pruning_method == 'TopK_first':
+      forward = functools.partial(self._forward, frozen_params=frozen_params)
+
+      device_clean_grads, unused_aux = jax.grad(forward, has_aux=True)(
+          params, inputs, network_state, rng_device)
+
+      avg_clean_grads = jax.lax.pmean(device_clean_grads, axis_name='i')
+
+      def get_netNum(params):
+        leaves_value, structure = jax.tree_util.tree_flatten(params)
+        group_num = 0
+        num = 0
+        for leave in leaves_value:
+          num += jnp.size(leave)
+          # print(leave.shape)
+          group_num += jnp.ceil(jnp.size(leave) / 256.)
+        return num, group_num
+      
+      if self.paramsNum is None:
+        self.paramsNum, self.group_num = get_netNum(params)
+      # # list_len = 100#jnp.array((paramsNum/256+1), int)
+      # print("************************", self.pruning_eps_step)
+      linear_pruning_amount = 99.9 - (99.9 - self._batch_pruning_amount)*global_step/self.max_step
+      # print("************************", linear_pruning_amount)
+      theta = self.pruning_eps_step / (self.paramsNum  * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100)
+      # theta = 0.1
+      self.mallows_mode=mallows_model_256.MallowsModel(256, theta, self._batch_pruning_amount)
+      self.batch_pruningFn = self.batch_pruning_topk_split(linear_pruning_amount, theta)
+
+      grad_pruned, _=self.batch_pruningFn(avg_clean_grads, avg_clean_grads)
+      self.mask = jax.tree_util.tree_map(lambda x: jnp.where(x == 0, 0, 1), grad_pruned)
+      mask_norm = get_sum(self.mask)
+      mask_ratio = mask_norm / self.paramsNum
+      # ipdb.set_trace()
 
 
-    #linear_pa
-    #num1=(1-0.49*global_step/self.max_step)*100
-    #if mode:
-
-    # else :
-    #   (loss, (network_state, metrics,
-    #     loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=grad_clipping.pruning(pruning_amount=50))(
-    #     params, inputs, network_state, rng_device)
-    # (loss, (network_state, metrics,
-    #     loss_vector)), device_grads = self.value_and_clipped_grad(forward)(
-    #         params, inputs, network_state, rng_device)
-
-
-    # if LPA
 
     if self._datalens_pruning:
       (loss, (network_state, metrics,
@@ -458,18 +491,13 @@ class Updater:
       # print('inputshape')
       # print(inputs['images'].shape, inputs['labels'].shape)
       (loss, (network_state, metrics,
-        loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=None)(
-            params, inputs, network_state, rng_device)
+        loss_vector)), device_grads, errors = self.value_and_clipped_grad(forward)(
+            params, inputs, network_state, rng_device, self.mask)
       print('datalens not works')
-
-    
-    # else:
-    #   (loss, (network_state, metrics,
-    #           loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=grad_clipping.pruning(pruning_amount=(1-0.5*global_step/self.max_step)*100))(
-    #           params, inputs, network_state, rng_device)
 
     if self._using_clipped_grads:
       device_grads, grad_norms_per_sample, origin_grads = device_grads
+      device_errors, error_norms_per_sample, origin_error = errors
     else:
       grad_norms_per_sample = None
       origin_grads = device_grads
@@ -478,9 +506,22 @@ class Updater:
     # Synchronize metrics and gradients across devices.
     loss, metrics, avg_grads, avgori_grads = jax.lax.pmean(
         (loss, metrics, device_grads, origin_grads), axis_name='i')
+    avg_error, avgori_error = jax.lax.pmean(
+        (device_errors, origin_error), axis_name='i')
+    pruning_fn = self.batch_pruning_top_k(linear_pruning_amount)
+    mask_ori = pruning_fn(avgori_grads)
+    mask_clipped = pruning_fn(avg_grads)
+    mask_u = jax.tree_util.tree_map(lambda x, y: x*y, mask_ori, mask_clipped)
+    mask_u_ratio = get_sum(mask_u) / mask_norm
+    
     loss_all = jax.lax.all_gather(loss_vector, axis_name='i')
     loss_vector = jnp.reshape(loss_all, [-1])
 
+    self.error_norm = optax.global_norm(avgori_error)
+    self.clipped_error_norm = optax.global_norm(avg_error)
+    error_clipped = jnp.mean(jnp.greater(
+            error_norms_per_sample, self.error_clip_norm))
+    # error_clipped = jnp.max(error_norms_per_sample)
     ##datalens 
     # datalens_pruningfn=grad_clipping.datalens_pruning(self._datalens_k)
     # avg_grads1=datalens_pruningfn(avg_grads)
@@ -514,7 +555,8 @@ class Updater:
         grads=jax.tree_util.tree_map(jnp.zeros_like, avg_grads),
         rng_key=rng_common,
       )
-      if self.error is None:
+
+      if avg_error is None:
         error_noise = None
       else:
         error_noise, error_std = optim.add_noise_to_grads(
@@ -523,9 +565,12 @@ class Updater:
           noise_std_relative=self.error_std,
           apply_every=self.batching.apply_update_every(global_step),
           total_batch_size=self.batching.batch_size(global_step),
-          grads=jax.tree_util.tree_map(jnp.zeros_like, self.error),
+          grads=jax.tree_util.tree_map(jnp.zeros_like, avg_error),
           rng_key=rng_common,
         )
+      if self.mask is not None:
+        noise = jax.tree_util.tree_map(lambda x, y: x * y, noise, self.mask)
+        error_noise = jax.tree_util.tree_map(lambda x, y: x * (1-y), error_noise, self.mask)
 
 
     # Compute our 'final' gradients `grads`: these comprise the clipped
@@ -537,6 +582,8 @@ class Updater:
         avg_grads,
         reg_grads,
         noise,
+        # error_noise,
+        # avg_error,
     )
 
     if self._batch_pruning_method == 'TopK':
@@ -653,7 +700,13 @@ class Updater:
         grads_norm=optax.global_norm(grads),
         update_step=update_step,
         error_norm=self.error_norm,
+        error_clipped_norm=self.clipped_error_norm,
+        error_clipped=error_clipped,
         avg_grads_norm=optax.global_norm(avgori_grads),
+        avg_clipped_norm=optax.global_norm(avg_grads),
+        mask_norm = mask_norm,
+        mask_u_ratio=mask_u_ratio,
+        error_sigma=self.error_std,
     )
 
     scalars.update(metrics)

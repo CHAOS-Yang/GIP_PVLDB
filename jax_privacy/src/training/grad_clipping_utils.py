@@ -84,13 +84,15 @@ class ShapeEvaluator:
       self,
       forward_fn,
       clipping_fn,
+      clipping_error_fn,
       grad_fn_vectorized,
   ):
     self._grad_fn = jax.value_and_grad(forward_fn, has_aux=True)
     self._clipping_fn = clipping_fn
+    self._clipping_error_fn = clipping_error_fn
     self._grad_fn_vectorized = grad_fn_vectorized
 
-  def batched_shapes(self, params, inputs, network_state, rng):
+  def batched_shapes(self, params, inputs, network_state, rng, mask):
     """Evaluate the expected shapes."""
     batch_size = jax.tree_leaves(inputs)[0].shape[0]
     out, grads = jax.eval_shape(
@@ -100,19 +102,19 @@ class ShapeEvaluator:
     # can log statistics per sample.
     vectorize = lambda x: jax.lax.broadcast(x, (batch_size,))
     aux = jax.eval_shape(lambda tree: jax.tree_map(vectorize, tree), aux)
-    return out, (grads, aux, origin_grads)
+    return out, (grads, aux, origin_grads), (grads, aux, origin_grads)
 
-  def vectorized_shapes(self, params, inputs, network_state, rng):
+  def vectorized_shapes(self, params, inputs, network_state, rng, mask):
     """Evaluate the expected shapes when vectorizing the gradient."""
     return jax.eval_shape(
-        self._grad_fn_vectorized, params, inputs, network_state, rng)
+        self._grad_fn_vectorized, params, inputs, network_state, rng, mask)
 
-  def should_average(self, params, inputs, network_state, rng):
+  def should_average(self, params, inputs, network_state, rng, mask):
     """Detect whether arrays should be averaged or stacked based on shapes."""
     return jax.tree_map(
         _should_average_array,
-        self.batched_shapes(params, inputs, network_state, rng),
-        self.vectorized_shapes(params, inputs, network_state, rng),
+        self.batched_shapes(params, inputs, network_state, rng, mask),
+        self.vectorized_shapes(params, inputs, network_state, rng, mask),
     )
 
 
