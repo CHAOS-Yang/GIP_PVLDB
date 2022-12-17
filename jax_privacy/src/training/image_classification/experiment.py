@@ -170,10 +170,11 @@ class Experiment(experiment.AbstractExperiment):
       pruning_eps = self.config.training.dp.stop_training_at_epsilon * self.index_noise_weight
       pruning_eps_step = pruning_eps / self._max_num_updates / self.config.training.batch_size.init_value * self.num_training_samples
       if self.same_step==True:
-        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight - self.error_noise_weight)
+        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight) #- self.error_noise_weight)
         sigma=self.accountant.compute_target_sigma(self._max_num_updates) #compute sigma from 0.9eps and the max_steps
-        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * self.error_noise_weight
-        error_sigma = self.accountant.compute_target_sigma(self._max_num_updates)
+        # self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * self.error_noise_weight
+        # error_sigma = self.accountant.compute_target_sigma(self._max_num_updates)
+        error_sigma = 0 
       else:
         sigma=self.config.training.dp.noise.std_relative
     else:

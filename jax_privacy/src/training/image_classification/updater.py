@@ -189,7 +189,7 @@ class Updater:
 
     self.error = None
     self.error_clip_norm = 0.1
-    self.error_std = 0
+    self.error_std = error_sigma
     self.error_norm = 0.0
     self.clipped_error_norm = 0.0
     self.mask = None
@@ -452,7 +452,7 @@ class Updater:
           params, inputs, network_state, rng_device)
 
       avg_clean_grads = jax.lax.pmean(device_clean_grads, axis_name='i')
-
+      del device_clean_grads, unused_aux
       def get_netNum(params):
         leaves_value, structure = jax.tree_util.tree_flatten(params)
         group_num = 0
@@ -467,7 +467,7 @@ class Updater:
         self.paramsNum, self.group_num = get_netNum(params)
       # # list_len = 100#jnp.array((paramsNum/256+1), int)
       # print("************************", self.pruning_eps_step)
-      linear_pruning_amount = 99.9 - (99.9 - self._batch_pruning_amount)*global_step/self.max_step
+      linear_pruning_amount = 75 - (75 - self._batch_pruning_amount)*global_step/self.max_step
       # print("************************", linear_pruning_amount)
       theta = self.pruning_eps_step / (self.paramsNum  * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100)
       # theta = 0.1
@@ -493,6 +493,7 @@ class Updater:
       (loss, (network_state, metrics,
         loss_vector)), device_grads, errors = self.value_and_clipped_grad(forward)(
             params, inputs, network_state, rng_device, self.mask)
+            
       print('datalens not works')
 
     if self._using_clipped_grads:
@@ -509,10 +510,16 @@ class Updater:
     avg_error, avgori_error = jax.lax.pmean(
         (device_errors, origin_error), axis_name='i')
     pruning_fn = self.batch_pruning_top_k(linear_pruning_amount)
-    mask_ori = pruning_fn(avgori_grads)
-    mask_clipped = pruning_fn(avg_grads)
-    mask_u = jax.tree_util.tree_map(lambda x, y: x*y, mask_ori, mask_clipped)
+
+    mask_clipped = pruning_fn(avg_error)
+    mask_ori = pruning_fn(avgori_error)
+    mask_first = pruning_fn(avg_clean_grads)
+    mask_u = jax.tree_util.tree_map(lambda x, y: x*y, mask_first, mask_clipped)
+    mask_check = jax.tree_util.tree_map(lambda x, y: x*y, mask_first, mask_ori)
     mask_u_ratio = get_sum(mask_u) / mask_norm
+    mask_check_ratio = get_sum(mask_check) / mask_norm
+    mask_distance = get_sum(jax.tree_util.tree_map(lambda x, y: jnp.abs(x-y), mask_first, mask_clipped))
+    mask_check_distance = get_sum(jax.tree_util.tree_map(lambda x, y: jnp.abs(x-y), mask_first, mask_ori))
     
     loss_all = jax.lax.all_gather(loss_vector, axis_name='i')
     loss_vector = jnp.reshape(loss_all, [-1])
@@ -707,6 +714,8 @@ class Updater:
         mask_norm = mask_norm,
         mask_u_ratio=mask_u_ratio,
         error_sigma=self.error_std,
+        mask_check_ratio=mask_check_ratio,
+        mask_distance=mask_distance,
     )
 
     scalars.update(metrics)
