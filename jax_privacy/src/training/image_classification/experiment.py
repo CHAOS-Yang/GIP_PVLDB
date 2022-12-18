@@ -20,6 +20,8 @@ from typing import Any, Dict, Union
 
 from absl import flags
 from absl import logging
+import os
+import tensorflow.compat.v2 as tf
 import chex
 import haiku as hk
 import jax
@@ -282,6 +284,17 @@ class Experiment(experiment.AbstractExperiment):
     # logging.info(global_step)
     # print(self.config)
 
+    # Save final checkpoint.
+    # if self.config.model.model_type == 'nf_resnet':
+    if self.config.save_final_checkpoint_as_npy:
+      if self.update_step % 300 == 0:
+        f_np = lambda x: np.array(jax.device_get(utils.get_first(x)))
+        np_params = jax.tree_util.tree_map(f_np, self._params)
+        np_state = jax.tree_util.tree_map(f_np, self._network_state)
+        path_npy = os.path.join(self.config.checkpoint_dir, 'step_' + str(self.update_step) + 'checkpoint.npy')
+        with tf.io.gfile.GFile(path_npy, 'wb') as fp:
+          np.save(fp, (np_params, np_state))
+        logging.info('Saved final checkpoint at %s', path_npy)
 
     # if not self.config.training.dp.datalens_pruning and self.update_step % 20 == 0:
     #   csv_file = open('/home/jungang/cos_plot/' +self.config.model.model_type+ self.config.training.dp.batch_pruning_method + str(self.config.training.dp.batch_pruning_amount)+ '_cos.csv','a',newline='',encoding='utf-8')
@@ -355,8 +368,14 @@ class Experiment(experiment.AbstractExperiment):
       rng_key = utils.bcast_local_devices(self.init_rng)
       self._params, self._network_state, self._opt_state = self.updater.init(
           inputs=next(self._train_input), rng_key=rng_key)
-
-      if self.config.model.restore.path:
+      if self.config.load_checkpoint_from_npy:
+        _params, _network_state = np.load(self.config.load_checkpoint_dir, allow_pickle=True)
+        _params = utils.bcast_local_devices(_params)
+        _network_state = utils.bcast_local_devices(_network_state)
+        self._params = hk.data_structures.merge(self._params, _params)
+        self._network_state = hk.data_structures.merge(self._network_state, _network_state)
+        logging.info('Initialized parameters from a checkpoint_npy.')
+      elif self.config.model.restore.path:
         self._params, self._network_state = models.restore_from_path(
             restore_path=self.config.model.restore.path,
             params_key=self.config.model.restore.params_key,

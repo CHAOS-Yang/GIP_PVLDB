@@ -467,7 +467,7 @@ class Updater:
         self.paramsNum, self.group_num = get_netNum(params)
       # # list_len = 100#jnp.array((paramsNum/256+1), int)
       # print("************************", self.pruning_eps_step)
-      linear_pruning_amount = 75 - (75 - self._batch_pruning_amount)*global_step/self.max_step
+      linear_pruning_amount = 99.9 - (99.9 - self._batch_pruning_amount)*global_step/self.max_step
       # print("************************", linear_pruning_amount)
       theta = self.pruning_eps_step / (self.paramsNum  * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100)
       # theta = 0.1
