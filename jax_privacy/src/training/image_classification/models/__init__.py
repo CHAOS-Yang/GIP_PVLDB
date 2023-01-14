@@ -27,7 +27,7 @@ from jax_privacy.src.training.image_classification.models import imagenet
 from jax_privacy.src.training.image_classification.models import mnist
 from jax_privacy.src.training.image_classification.models import vgg16
 from jax_privacy.src.training.image_classification.models import resnet
-# from jax_privacy.src.training.image_classification.models import gcn
+from jax_privacy.src.training.image_classification.models import resnet20
 from jax_privacy.src.training.image_classification.models import lenet
 from jax_privacy.src.training.image_classification.models import alexnet
 from jax_privacy.src.training.image_classification.models import mlp
@@ -41,6 +41,7 @@ MODELS = {
     'nf_resnet': imagenet.NFResNet,
     'vgg16':vgg16.VGG16,
     'resnet18':resnet.ResNet18,
+    'resnet20':resnet20.ResNet20,
     # 'gcn':gcn.GCN,
     'lenet':lenet.LeNet,
     'alexnet':alexnet.AlexNet,

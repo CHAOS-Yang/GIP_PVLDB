@@ -176,15 +176,18 @@ def _value_and_clipped_grad_single_sample(     #no pruning
     # Compute the gradient.
     out, grad = jax.value_and_grad(forward_fn, has_aux=True)(
         params, inputs_expanded, network_state, rng)
-    
-    pruned_grad = jax.tree_util.tree_map(lambda x,y: x * y, grad, mask)
-    # pruned_grad = grad
+    if mask is None:
+      pruned_grad = grad
+      error = jax.tree_util.tree_map(lambda x: 0*x, grad)
+    else:
+      pruned_grad = jax.tree_util.tree_map(lambda x,y: x * y, grad, mask)
+      # pruned_grad = grad
 
-    # error = jax.tree_util.tree_map(lambda x,y: x * (1-y), grad, mask)
-    error = grad
+      error = jax.tree_util.tree_map(lambda x,y: x * (1-y), grad, mask)
+      # error = grad
 
     # Apply the clipping function
-    return out, clipping_fn(pruned_grad), clipping_fn(error)
+    return out, clipping_fn(pruned_grad)#, clipping_error_fn(error)
 
   return grad_fn
 

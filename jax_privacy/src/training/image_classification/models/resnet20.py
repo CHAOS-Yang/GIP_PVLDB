@@ -62,13 +62,13 @@ class BlockV1(hk.Module):
 
       self.proj_batchnorm = self.norm_fn(name="shortcut_batchnorm")
 
-    channel_div = 4 if bottleneck else 1
+    channel_div = 1 if bottleneck else 1
     conv_0 = common.WSConv2D(
         output_channels=channels // channel_div,
         kernel_shape=1 if bottleneck else 3,
         stride=1 if bottleneck else stride,
         with_bias=False,
-        padding="SAME",
+        padding= "SAME",
         name="conv_0")
     bn_0 = self.norm_fn(name="batchnorm_0")
 
@@ -77,7 +77,7 @@ class BlockV1(hk.Module):
         kernel_shape=3,
         stride=stride if bottleneck else 1,
         with_bias=False,
-        padding="SAME",
+        padding= "SAME",
         name="conv_1")
 
     bn_1 = self.norm_fn(name="batchnorm_1")
@@ -89,7 +89,7 @@ class BlockV1(hk.Module):
           kernel_shape=1,
           stride=1,
           with_bias=False,
-          padding="SAME",
+          padding= "SAME",
           name="conv_2")
 
       bn_2 = self.norm_fn(name="batchnorm_2")
@@ -147,7 +147,7 @@ class BlockV2(hk.Module):
         kernel_shape=1 if bottleneck else 3,
         stride=1 if bottleneck else stride,
         with_bias=False,
-        padding="SAME",
+        padding= "SAME",
         name="conv_0")
 
     bn_0 = hk.BatchNorm(name="batchnorm_0", **bn_config)
@@ -157,7 +157,7 @@ class BlockV2(hk.Module):
         kernel_shape=3,
         stride=stride if bottleneck else 1,
         with_bias=False,
-        padding="SAME",
+        padding= "SAME",
         name="conv_1")
 
     bn_1 = hk.BatchNorm(name="batchnorm_1", **bn_config)
@@ -242,12 +242,12 @@ class ResNet(hk.Module):
           "channels_per_group": (64, 128, 256, 512),
           "use_projection": (False, True, True, True),
       },
-      # 20: {
-      #     "blocks_per_group": (3, 3, 3),
-      #     "bottleneck": False,
-      #     "channels_per_group": (16, 32, 64),
-      #     "use_projection": (False, True, True),
-      # },
+      20: {
+          "blocks_per_group": (3, 3, 3),
+          "bottleneck": False,
+          "channels_per_group": (16, 32, 64),
+          "use_projection": (False, True, True),
+      },
       34: {
           "blocks_per_group": (3, 4, 6, 3),
           "bottleneck": False,
@@ -298,7 +298,7 @@ class ResNet(hk.Module):
       initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
       strides: Sequence[int] = (1, 2, 2, 2),
       which_norm: str = 'GroupNorm',
-      groups: int = 16,  # Only used for GroupNorm.
+      groups: int = 4,  # Only used for GroupNorm.
   ):
     """Constructs a ResNet model.
     Args:
@@ -337,16 +337,16 @@ class ResNet(hk.Module):
     logits_config.setdefault("name", "logits")
 
     # Number of blocks in each group for ResNet.
-    check_length(4, blocks_per_group, "blocks_per_group")
-    check_length(4, channels_per_group, "channels_per_group")
-    check_length(4, strides, "strides")
+    # check_length(4, blocks_per_group, "blocks_per_group")
+    # check_length(4, channels_per_group, "channels_per_group")
+    # check_length(4, strides, "strides")
 
     initial_conv_config = dict(initial_conv_config or {})
-    initial_conv_config.setdefault("output_channels", 64)
-    initial_conv_config.setdefault("kernel_shape", 7)
-    initial_conv_config.setdefault("stride", 2)
+    initial_conv_config.setdefault("output_channels", 16)
+    initial_conv_config.setdefault("kernel_shape", 3)
+    initial_conv_config.setdefault("stride", 1)
     initial_conv_config.setdefault("with_bias", False)
-    initial_conv_config.setdefault("padding", "SAME")
+    initial_conv_config.setdefault("padding","SAME")
     initial_conv_config.setdefault("name", "initial_conv")
 
     self.initial_conv = common.WSConv2D(**initial_conv_config)

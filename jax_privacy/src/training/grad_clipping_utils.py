@@ -102,7 +102,7 @@ class ShapeEvaluator:
     # can log statistics per sample.
     vectorize = lambda x: jax.lax.broadcast(x, (batch_size,))
     aux = jax.eval_shape(lambda tree: jax.tree_map(vectorize, tree), aux)
-    return out, (grads, aux, origin_grads), (grads, aux, origin_grads)
+    return out, (grads, aux, origin_grads)#, (grads, aux, origin_grads)
 
   def vectorized_shapes(self, params, inputs, network_state, rng, mask):
     """Evaluate the expected shapes when vectorizing the gradient."""

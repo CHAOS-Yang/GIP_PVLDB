@@ -123,7 +123,10 @@ class Experiment(experiment.AbstractExperiment):
     self._num_classes = self.config.data.dataset.num_classes
     self.num_training_samples = self.config.data.dataset.train.num_samples
     self.same_step = True
-    self.index_noise_weight = 0.01
+    if self.config.training.dp.index_noise_weight is None:
+      self.index_noise_weight = 0.01
+    else:
+      self.index_noise_weight = self.config.training.dp.index_noise_weight
     self.error_noise_weight = 0
 
     
@@ -149,7 +152,7 @@ class Experiment(experiment.AbstractExperiment):
     )
 
     if "TopK" in self.config.training.dp.batch_pruning_method and self.same_step==False:
-      noise_eps = self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight - self.error_noise_weight)
+      noise_eps = self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight)
     else:
       noise_eps = self.config.training.dp.stop_training_at_epsilon
       
@@ -167,21 +170,26 @@ class Experiment(experiment.AbstractExperiment):
       self._max_num_updates = self.accountant.compute_max_num_updates()
     else:
       self._max_num_updates = self.config.num_updates
-
+      
+    if self.config.training.dp.per_example_pruning_amount == 97:
+      self._max_num_updates = self.config.num_updates
     if "TopK" in self.config.training.dp.batch_pruning_method:
       pruning_eps = self.config.training.dp.stop_training_at_epsilon * self.index_noise_weight
       pruning_eps_step = pruning_eps / self._max_num_updates / self.config.training.batch_size.init_value * self.num_training_samples
       if self.same_step==True:
-        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight) #- self.error_noise_weight)
-        sigma=self.accountant.compute_target_sigma(self._max_num_updates) #compute sigma from 0.9eps and the max_steps
+        self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * (1 - self.index_noise_weight)
+        sigma_total=self.accountant.compute_target_sigma(self._max_num_updates) #compute sigma from 0.9eps and the max_steps
         # self.accountant._dp_epsilon=self.config.training.dp.stop_training_at_epsilon * self.error_noise_weight
         # error_sigma = self.accountant.compute_target_sigma(self._max_num_updates)
-        error_sigma = 0 
+        # sigma = jnp.abs(sigma_total * jnp.sqrt(2))
+        sigma = sigma_total * np.sqrt(1 + self.error_noise_weight**2)
+        error_sigma = sigma * self.error_noise_weight
       else:
         sigma=self.config.training.dp.noise.std_relative
     else:
       pruning_eps_step = None
       sigma=self.config.training.dp.noise.std_relative
+      error_sigma = 0
 
     # When a keyword argument is specified in `relative_schedule_kwargs`, it
     # means that its schedule is defined only relatively to the total number

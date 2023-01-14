@@ -23,15 +23,20 @@ from ml_collections import config_dict as configdict
 @config_base.wrap_get_config
 def get_config(config):
   """Experiment config."""
+  config.checkpoint_dir = '/home/jungang/jax_privacy/result/eps=1/baseline_bz256_std1.5_lr0.1'  
 
   config.experiment_kwargs = configdict.ConfigDict(
       dict(
           config=dict(
               num_updates=875,
+              checkpoint_dir = '/home/jungang/jax_privacy/result/eps=1/baseline_bz256_std1.5_lr0.1',
+              save_final_checkpoint_as_npy = True,
+              load_checkpoint_from_npy = False,
+              load_checkpoint_dir = None,
               optimizer=dict(
                   name='sgd',
                   lr=dict(
-                      init_value=2.0,
+                      init_value=0.1,
                       decay_schedule_name=None,
                       decay_schedule_kwargs=None,
                       relative_schedule_kwargs=None,
@@ -62,7 +67,7 @@ def get_config(config):
               ),
               training=dict(
                   batch_size=dict(
-                      init_value=4096,
+                      init_value=256,
                       per_device_per_step=64,
                       scale_schedule=None,  # example: {'2000': 8, '4000': 16},
                   ),
@@ -71,11 +76,11 @@ def get_config(config):
                   dp=dict(
                       target_delta=1e-5,
                       clipping_norm=1.0,  # float('inf') or None to deactivate
-                      pruning_amount=0.9,
+                    #   pruning_amount=0.9,
                       stop_training_at_epsilon=1.0,  # None,
                       rescale_to_unit_norm=True,
                       noise=dict(
-                          std_relative=10.0,  # noise multiplier
+                          std_relative=1.5,  # noise multiplier
                           ),
                       # Set the following flag to auto-tune one of:
                       # * 'batch_size'
@@ -84,6 +89,11 @@ def get_config(config):
                       # * 'num_updates'
                       # Set to `None` to deactivate auto-tunning
                       auto_tune=None,  # 'num_updates',  # None,
+                      per_example_pruning_amount=30,  ##(%)   cant be 100
+                      batch_pruning_amount=10,  ##(#)
+                      datalens_pruning=False,
+                      batch_pruning_method="None",
+                      index_noise_weight=0,
                       ),
                   logging=dict(
                       grad_clipping=True,
