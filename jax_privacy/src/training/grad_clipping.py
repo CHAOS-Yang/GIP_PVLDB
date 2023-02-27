@@ -172,18 +172,20 @@ def _value_and_clipped_grad_single_sample(     #no pruning
         lambda x: jnp.expand_dims(x, axis=0),
         inputs,
     )
+    # image = inputs["inputs"]
+    # print('inputs_shape', image.shape)
 
     # Compute the gradient.
     out, grad = jax.value_and_grad(forward_fn, has_aux=True)(
         params, inputs_expanded, network_state, rng)
     if mask is None:
       pruned_grad = grad
-      error = jax.tree_util.tree_map(lambda x: 0*x, grad)
+      # error = jax.tree_util.tree_map(lambda x: 0*x, grad)
     else:
       pruned_grad = jax.tree_util.tree_map(lambda x,y: x * y, grad, mask)
       # pruned_grad = grad
 
-      error = jax.tree_util.tree_map(lambda x,y: x * (1-y), grad, mask)
+      # error = jax.tree_util.tree_map(lambda x,y: x * (1-y), grad, mask)
       # error = grad
 
     # Apply the clipping function
@@ -214,6 +216,7 @@ def _value_and_clipped_pruned_grad_single_sample(  ##
       inputs: Inputs,
       network_state: ModelState,
       rng: chex.PRNGKey,
+      mask: Params,
   ) -> Tuple[Tuple[Loss, Aux], Tuple[GradParams, Aux]]:
     # Add a batch-size dimension.
     inputs_expanded = jax.tree_util.tree_map(
@@ -305,6 +308,7 @@ def value_and_clipped_grad_vectorized(
     forward_fn: LossFn,
     clipping_fn: ClippingFn,
     clipping_error_fn: ClippingFn=None,
+    pruning_fn: PruningFn=None,
 ) -> GradFn:
   """Create a function that computes grads clipped per example using vmapping.
 
@@ -321,18 +325,18 @@ def value_and_clipped_grad_vectorized(
   Returns:
     Function that clips gradient per-example and average them.
   """
-  # if pruning_fn is not None:
-  #   grad_fn_single_sample = _value_and_clipped_pruned_grad_single_sample(  ##
-  #       forward_fn=forward_fn,
-  #       clipping_fn=clipping_fn,
-  #       pruning_fn=pruning_fn,
-  #   )
-  # else:
-  grad_fn_single_sample = _value_and_clipped_grad_single_sample(  ##
-      forward_fn=forward_fn,
-      clipping_fn=clipping_fn,
-      clipping_error_fn=clipping_error_fn,
-  )
+  if pruning_fn is not None:
+    grad_fn_single_sample = _value_and_clipped_pruned_grad_single_sample(  ##
+        forward_fn=forward_fn,
+        clipping_fn=clipping_fn,
+        pruning_fn=pruning_fn,
+    )
+  else:
+    grad_fn_single_sample = _value_and_clipped_grad_single_sample(  ##
+        forward_fn=forward_fn,
+        clipping_fn=clipping_fn,
+        clipping_error_fn=clipping_error_fn,
+    )
 
 
   grad_fn_vectorized = jax.vmap(

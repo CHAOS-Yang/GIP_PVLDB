@@ -98,6 +98,7 @@ class Updater:
       per_example_pruning_amount: Optional[chex.Numeric],
       batch_pruning_amount: Optional[chex.Numeric],
       pruning_eps_step: Optional[chex.Numeric],
+      model_type: Optional[str],
       # paramsNum: Optional[chex.Numeric],
 
       max_step: Optional[chex.Numeric],
@@ -186,6 +187,7 @@ class Updater:
     self.group_num=None
     self.change_num_list = None #jnp.load('/home/jungang/jax_privacy/jax_privacy/src/training/change_num_list.npy')
     self.steps = 0
+    self.model_type = model_type
 
     self.error = None
     self.error_clip_norm = 0.1
@@ -193,6 +195,7 @@ class Updater:
     self.error_norm = 0.0
     self.clipped_error_norm = 0.0
     self.mask = None
+    self.random_split = False
     
 
     self.max_step=max_step
@@ -379,25 +382,20 @@ class Updater:
 
     def pruning_fn(grad: GradParams) -> Tuple[GradParams, Aux]:
       tree_value, tree_def=jax.tree_util.tree_flatten(grad)
-      tree_value=map(leaves_split, tree_value)
-      tree_output=jax.tree_util.tree_unflatten(tree_def, tree_value)
+      tree_value=map(leaves_split,tree_value)
+      tree_output=jax.tree_util.tree_unflatten(tree_def,tree_value)
       return tree_output
 
-    def leaves_split(leaves) :
-      split_leaves = jnp.array_split(leaves.reshape(-1), leaves.size // 256 + 1)
-      for i in range(leaves.size // 256 + 1) :
-        split_leaves[i] = leaves_pruning(split_leaves[i])
-      return jnp.concatenate(split_leaves).reshape(leaves.shape)
-
-    def leaves_pruning(leaves):
+    # def leaves_pruning(leaves):
+    #   random_grad = jax.random.normal(self.random_key,jnp.shape(leaves))
+    #   quantile=jnp.percentile(jnp.abs(random_grad), 100-batch_pruning_amount)
+    #   # return jax.tree_util.tree_map(lambda x: x * get_mask(random_grad, quantile), leaves)
+    #   return jnp.where(jnp.abs(random_grad)> quantile, 1, 0)
   
-      return jax.tree_util.tree_map(lambda x: x * get_mask(x), leaves)
-
-    def get_mask(x):
-      random_grad = jax.random.normal(self.random_key, jnp.shape(x))
-      quantile=jnp.percentile(jnp.abs(random_grad), 100-batch_pruning_amount)
-      # self.quantile=quantile
-      return jnp.where(jnp.abs(random_grad)> quantile, jnp.ones_like(x), jnp.zeros_like(x))
+    def leaves_split(mask_leaves):
+      mask = mask_leaves.reshape(-1)
+      mask = self.random_mode.model(mask, batch_pruning_amount)
+      return mask.reshape(mask_leaves.shape)
 
     return pruning_fn
 
@@ -444,7 +442,8 @@ class Updater:
         for leave in leaves_value:
           sum += jnp.sum(leave)
         return sum
-
+    
+    theta = 0
     if self._batch_pruning_method == 'TopK_first':
       forward = functools.partial(self._forward, frozen_params=frozen_params)
 
@@ -470,7 +469,11 @@ class Updater:
       # print("************************", self.pruning_eps_step)
       linear_pruning_amount = 99.9 - (99.9 - self._batch_pruning_amount)*global_step/self.max_step
       # print("************************", linear_pruning_amount)
-      theta = self.pruning_eps_step / (self.paramsNum  * 2 * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100)
+      if self.model_type == 'resnet18':
+        eps_step = self.pruning_eps_step / 3 + 4 * self.pruning_eps_step / 3 * global_step/self.max_step
+        theta = eps_step / (self.paramsNum  * 2 * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100) 
+      else:
+        theta = self.pruning_eps_step / (self.paramsNum  * 2 * jnp.where(linear_pruning_amount > 50, 100 - linear_pruning_amount, linear_pruning_amount) / 100)
       # theta = 0.1
       self.mallows_mode=mallows_model_256.MallowsModel(256, theta, self._batch_pruning_amount)
       self.batch_pruningFn = self.batch_pruning_topk_split(linear_pruning_amount, theta)
@@ -488,13 +491,21 @@ class Updater:
 
       avg_clean_grads = jax.lax.pmean(device_clean_grads, axis_name='i')
       del device_clean_grads, unused_aux
-      self.batch_pruningFn = self.batch_pruning_random(99.9 - jnp.exp(jnp.log(99.9 - self._batch_pruning_amount)*global_step/self.max_step))   
+      if self.random_split:
+        linear_pruning_amount = 99.9 - (99.9 - self._batch_pruning_amount)*global_step/self.max_step
+        self.random_mode=mallows_model_256.RandomModel()
+        self.batch_pruningFn = self.batch_pruning_random_split(linear_pruning_amount)
+      else:
+        self.batch_pruningFn = self.batch_pruning_random(99.9 - jnp.exp(jnp.log(99.9 - self._batch_pruning_amount)*global_step/self.max_step))   
       self.mask=self.batch_pruningFn(avg_clean_grads)
       mask_norm = get_sum(self.mask)
-      # cos = cos_sim.cos_sim(grads, avg_grads)
       print('pruning finished')
     else:
       forward = functools.partial(self._forward, frozen_params=frozen_params)
+      device_clean_grads, unused_aux = jax.grad(forward, has_aux=True)(
+          params, inputs, network_state, rng_device)
+      avg_clean_grads = jax.lax.pmean(device_clean_grads, axis_name='i')
+      del device_clean_grads, unused_aux
       self.mask = None
 
 
@@ -503,8 +514,9 @@ class Updater:
     if self._datalens_pruning:
       (loss, (network_state, metrics,
         loss_vector)), device_grads = self.value_and_clipped_grad(forward, pruning_fn=grad_clipping.datalens_pruning(self._datalens_k))(
-        params, inputs, network_state, rng_device)
+        params, inputs, network_state, rng_device, self.mask)
       print('datalens works')
+      mask_norm = 0
     elif self._batch_pruning_method == 'TopK_first' or  self._batch_pruning_method == 'Random':
       # print('inputshape')
       # print(inputs['images'].shape, inputs['labels'].shape)
@@ -557,6 +569,7 @@ class Updater:
       # error_clipped = jnp.max(error_norms_per_sample)
       error_ratio = self.error_norm / self.g_norm
       grad_ratio = self.avg_prunedgrad_norm / self.g_norm
+      
     else:
       avg_error = None
       self.error_norm = 0
@@ -666,11 +679,15 @@ class Updater:
         )
       # cos = cos_sim.cos_sim(grads, avg_grads)
       print('pruning finished')
+    elif self._batch_pruning_method == 'TopK_first' or self._batch_pruning_method == 'Random':
+      if self.model_type == 'resnet20':
+        cos = cos_sim.cos_sim(grads, avg_clean_grads)
     else:
       # if self._datalens_pruning:
       #   cos = 0
       # else:
-      #   cos = cos_sim.cos_sim(grads, avg_grads)
+      if self.model_type == 'resnet20':
+        cos = cos_sim.cos_sim(grads, avg_clean_grads)
       print('Batch pruning skipped')
 
 
@@ -748,6 +765,7 @@ class Updater:
         # error_sigma=self.error_std,
         error_ratio=error_ratio,
         grad_ratio=grad_ratio,
+        theta=theta,
         # mask_check_ratio=mask_check_ratio,
         # mask_distance=mask_distance,
     )
@@ -778,8 +796,10 @@ class Updater:
     # remain frozen during training.
     new_params = hk.data_structures.merge(new_params, frozen_params)
 
-
-    return new_params, network_state, opt_state, scalars
+    if self.model_type == 'resnet20':
+      return new_params, network_state, opt_state, scalars, (cos, error_ratio)
+    else:
+      return new_params, network_state, opt_state, scalars
 
   def _compute_grad_alignment(
       self,

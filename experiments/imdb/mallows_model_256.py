@@ -67,8 +67,7 @@ class MallowsModel():
     # print(multi)
     pr = jnp.cumprod(multi)
     # print(pr)
-    pr = pr / jnp.sum(pr)
-    self.last_pr_list = pr
+    self.last_pr_list = pr / jnp.sum(pr)
     return self.last_pr_list
 
   def sample_dist(self, n_list, n):
@@ -85,12 +84,14 @@ class MallowsModel():
         # print(self.last_pr_list.shape)
         num = jax.random.choice(self._random_key, self.length + 1, p = self.last_pr_list)
       else:
-        num = jax.random.choice(self._random_key, self.length + 1, n_list.shape, p = self.last_pr_list)
+        num = jax.random.choice(self._random_key, self.length + 1, n_list.shape, p = self.pr_list)
         # print(num)
     return num
 
 
   def perturb(self,mask,change_num):
+    # if jnp.sum(change_num) == 0:
+    #   return mask
     self._random_key,_=jax.random.split(self._random_key)
     random_mask = jax.random.uniform(key=self._random_key, shape=jnp.shape(mask))
     # print(random_mask.shape)
@@ -100,23 +101,33 @@ class MallowsModel():
     # print('change_num', jnp.sum(change_num))
     if change_num.size < 2 and mask.shape[0] < 256:
       change_num = jnp.expand_dims(change_num,0)
-    quantile_1 = jnp.percentile(jnp.abs(mask_1), 100-(change_num/((jnp.size(mask)/change_num.size))*100), axis=0)
+    quantile_1 = jnp.percentile(jnp.abs(mask_1), 100-(change_num/(jnp.size(mask)/change_num.size)*100), axis=0)
+    # print('k_1',100-(change_num/(mask.shape[0])*100))
+    # print(change_num)
+    # print(100-(change_num/(jnp.size(mask)/change_num.size)*100))
 
     quantile_1 = jnp.expand_dims(jnp.diag(quantile_1), 0).repeat(mask.size // change_num.size, axis=0).reshape(mask.shape)
+    # print('q1', quantile_1)
 
-    mask_1 = jnp.where(jnp.abs(mask_1) >= quantile_1, 1, 0)
+    mask_1 = jnp.where(jnp.abs(mask_1) > quantile_1, 1, 0)
     
     mask_2 = random_mask * (jnp.ones_like(mask) - mask)
     quantile_2 = jnp.percentile(jnp.abs(mask_2), 100-(change_num/(jnp.size(mask)/change_num.size)*100), axis=0)
+    # print('k_2',100-(change_num/(jnp.size(mask)/change_num.size)*100))
     quantile_2 = jnp.expand_dims(jnp.diag(quantile_2), 0).repeat(mask.size // change_num.size, axis=0).reshape(mask.shape)
+    # print('q2', quantile_2)
+
+    
     # print(quantile_1)
     mask_2 = jnp.where(jnp.abs(mask_2)> quantile_2, 1, 0)
+
+    # print('quantile_1',quantile_1)
     mask = mask - mask_1 + mask_2
-    # print('mask_1',jnp.sum(mask_1))
-    # print('change_num', change_num)
+    # print('mask_1',jnp.sum(jnp.abs(mask_1)))
+    # print('change_num', jnp.sum(change_num))
     # print(change_num-jnp.sum(mask_1, axis = 0))
-    # print('mask_2',jnp.sum(mask_2))
-    # print(jnp.sum(jnp.where(mask==1, 1,0)))
+    # print('mask_2',jnp.sum(jnp.abs(mask_2)))
+    # print('error',jnp.sum(jnp.where(mask==2, 1,0)))
     # print(jnp.sum(jnp.abs(mask - mask_mod.reshape(mask.shape))))
     del mask_1, mask_2
     return mask
@@ -126,8 +137,9 @@ class MallowsModel():
     N=jnp.size(mask)
     list_len = int(N/256)+1
     '''
-    n=self.n
+    n=128
     # start = time.time()
+    back_shape = mask.shape
     if jnp.size(mask) % n == 0:
       n_list = jnp.ones(jnp.size(mask) // n) * n
       mask = mask.reshape(-1, mask.size // n)
@@ -135,10 +147,11 @@ class MallowsModel():
       # print('mask_shape', mask.shape)
     else:
       if jnp.size(mask) < n:
-        n_list = jnp.ones(1) * int(jnp.size(mask))
-        self.calculate_last_pr_list(n_list, jnp.array(n_list* pruning_amount/100, int))
-      elif jnp.size(mask) % 160 == 0:
-        n = 160
+        mask = mask.reshape(-1)
+        # n_list = jnp.ones(1) * int(jnp.size(mask))
+        # self.calculate_last_pr_list(n_list, jnp.array(n_list* pruning_amount/100, int))
+      elif jnp.size(mask) % 128 == 0:
+        n = 128
         n_list = jnp.ones(jnp.size(mask) // n) * n
         mask = mask.reshape(-1, mask.size // n)
         self.init_pr_list(n, jnp.array(n * pruning_amount/100, int))
@@ -153,96 +166,20 @@ class MallowsModel():
         n_list = jnp.ones(mask.shape[1]) * int(mask.shape[0])
         self.init_pr_list(int(mask.shape[0]), jnp.array(mask.shape[0] * pruning_amount/100, int))
     
-    percentile = jnp.expand_dims(jnp.percentile(jnp.abs(mask), 100 - pruning_amount, axis=0),0)
-    percentile.repeat(mask.shape[0]).reshape(mask.shape)
-    mask = jnp.where(jnp.abs(mask) > percentile, 1, 0)
-    change_num = self.sample_dist(n_list, jnp.size(mask))
-    mask=self.perturb(mask, change_num)
-    return mask
-
-  def random(self, mask, pruning_amount):
-    n=self.n
-    # start = time.time()
-    if jnp.size(mask) % n == 0:
-      n_list = jnp.ones(jnp.size(mask) // n) * n
-      mask = mask.reshape(-1, mask.size // n)
-      self.init_pr_list(n, jnp.array(n * pruning_amount/100, int))
-      # print('mask_shape', mask.shape)
+    if jnp.size(mask) >= n:
+      percentile = jnp.expand_dims(jnp.percentile(jnp.abs(mask), 100 - pruning_amount, axis=0),0)
+      percentile.repeat(mask.shape[0]).reshape(mask.shape)
+      mask = jnp.where(jnp.abs(mask) > percentile, 1, 0)
+      # print('n=',n)
+      # print(mask.shape)
+      change_num = self.sample_dist(n_list, jnp.size(mask))
+      # print('change_num', change_num.shape)
+      # print(self.pr_list)
+      mask=self.perturb(mask, change_num)
     else:
-      if jnp.size(mask) < n:
-        n_list = jnp.ones(1) * int(jnp.size(mask))
-        self.calculate_last_pr_list(n_list, jnp.array(n_list* pruning_amount/100, int))
-      elif jnp.size(mask) % 160 == 0:
-        n = 160
-        n_list = jnp.ones(jnp.size(mask) // n) * n
-        mask = mask.reshape(-1, mask.size // n)
-        self.init_pr_list(n, jnp.array(n * pruning_amount/100, int))
-      elif jnp.size(mask) % 192 == 0:
-        n = 192
-        n_list = jnp.ones(jnp.size(mask) // n) * n
-        mask = mask.reshape(-1, mask.size // n)
-        self.init_pr_list(n, jnp.array(n * pruning_amount/100, int))
-      else:
-        mask = mask.reshape(-1, mask.size // n + 1)
-        n_list = jnp.ones(mask.shape[1]) * int(mask.shape[0])
-        self.calculate_last_pr_list(int(mask.shape[0]), jnp.array(mask.shape[0] * pruning_amount/100, int))
-    
-    percentile = jnp.expand_dims(jnp.percentile(jnp.abs(mask), 100 - pruning_amount, axis=0),0)
-    percentile.repeat(mask.shape[0]).reshape(mask.shape)
-    mask = jnp.where(jnp.abs(mask) > percentile, 1, 0)
-    self._random_key,_=jax.random.split(self._random_key)
-    random_mask = jax.random.uniform(key=self._random_key, shape=jnp.shape(mask))
-    percentile = jnp.percentile(jnp.abs(random_mask), 100 - pruning_amount)
-    random_mask = jnp.where(jnp.abs(random_mask) > percentile, 1, 0)
-    return mask, random_mask
-
-class RandomModel():
-  def __init__(self, randomseed=None):
-    if randomseed==None:
-      numpy.random.seed()
-      randomseed=numpy.random.randint(1,2147483647)
-    self._random_key=jax.random.PRNGKey(randomseed)
-    self.n = 256
-    
-    '''
-    # static params got from config file
-    self.N=config.data.dataset.num
-    self.pruning_amount=
-    self.k=int(self.N*self.pruning_amount/100)
-    '''
-
-  def model(self, mask, pruning_amount):
-    '''
-    N=jnp.size(mask)
-    list_len = int(N/256)+1
-    '''
-    n=self.n
-    # start = time.time()
-    if jnp.size(mask) % n == 0:
-      n_list = jnp.ones(jnp.size(mask) // n) * n
-      mask = mask.reshape(-1, mask.size // n)
-    else:
-      if jnp.size(mask) < n:
-        n_list = jnp.ones(1) * int(jnp.size(mask))
-      elif jnp.size(mask) % 160 == 0:
-        n = 160
-        n_list = jnp.ones(jnp.size(mask) // n) * n
-        mask = mask.reshape(-1, mask.size // n)
-      elif jnp.size(mask) % 192 == 0:
-        n = 192
-        n_list = jnp.ones(jnp.size(mask) // n) * n
-        mask = mask.reshape(-1, mask.size // n)
-      else:
-        # n=200
-        mask = mask.reshape(-1, mask.size // n + 1)
-        n_list = jnp.ones(mask.shape[1]) * int(mask.shape[0])
-    random_grad = jax.random.uniform(key=self._random_key, shape=jnp.shape(mask))
-    percentile = jnp.expand_dims(jnp.percentile(jnp.abs(random_grad), 100 - pruning_amount, axis=0),0)
-    percentile.repeat(mask.shape[0]).reshape(mask.shape)
-    mask = jnp.where(jnp.abs(random_grad) > percentile, 1, 0)
-    # change_num = self.sample_dist(n_list, jnp.size(mask))
-    # mask=self.perturb(mask, change_num)
-    return mask 
+      mask = jnp.ones_like(mask)
+    return mask.reshape(back_shape)
+   
 
 if __name__=='__main__':
   random_key_main=jax.random.PRNGKey(89)

@@ -104,6 +104,8 @@ class Experiment(experiment.AbstractExperiment):
     self._eval_input = None
 
     self.grad_0=None   #
+    self.csv_log = 0
+    self.step_label = -1
 
     
     self._average_ema = jax.pmap(averaging.ema, axis_name='i')
@@ -229,6 +231,7 @@ class Experiment(experiment.AbstractExperiment):
         max_step=self._max_step,
         pruning_eps_step=pruning_eps_step,
         error_sigma=error_sigma,
+        model_type=self.config.model.model_type,
         # paramsNum=paramsNum,
     )
 
@@ -272,8 +275,8 @@ class Experiment(experiment.AbstractExperiment):
     # print(next(self._train_input)['images'].shape, next(self._train_input)['labels'].shape)
     # (1, 128, 28, 28) (1, 128, 10)
     # exit(0)
-
-    self._params, self._network_state, self._opt_state, scalars= (
+    if self.config.model.model_type == 'resnet20':
+      self._params, self._network_state, self._opt_state, scalars, log= (
         self.updater.update(
             params=self._params,
             network_state=self._network_state,
@@ -283,6 +286,17 @@ class Experiment(experiment.AbstractExperiment):
             rng=rng,
             #mode=mode1
         ))
+    else:
+      self._params, self._network_state, self._opt_state, scalars= (
+          self.updater.update(
+              params=self._params,
+              network_state=self._network_state,
+              opt_state=self._opt_state,
+              global_step=global_step,
+              inputs=next(self._train_input),
+              rng=rng,
+              #mode=mode1
+          ))
    
     # print(np.size(grad_array))
     # print(np.size(grad_array[0]))
@@ -303,11 +317,19 @@ class Experiment(experiment.AbstractExperiment):
         with tf.io.gfile.GFile(path_npy, 'wb') as fp:
           np.save(fp, (np_params, np_state))
         logging.info('Saved final checkpoint at %s', path_npy)
-
-    # if not self.config.training.dp.datalens_pruning and self.update_step % 20 == 0:
-    #   csv_file = open('/home/jungang/cos_plot/' +self.config.model.model_type+ self.config.training.dp.batch_pruning_method + str(self.config.training.dp.batch_pruning_amount)+ '_cos.csv','a',newline='',encoding='utf-8')
-    #   writer = csv.writer(csv_file)
-    #   writer.writerow(cos)
+    
+    
+    if self.config.model.model_type == 'resnet20' and self.update_step % 5 == 0 and self.config.training.dp.stop_training_at_epsilon == 2 and self.update_step > self.step_label:
+      self.step_label = self.update_step +  1 
+      csv_file = open('/home/jungang/cos_plot/' +self.config.model.model_type+ self.config.training.dp.batch_pruning_method + str(self.config.training.dp.batch_pruning_amount)+ '_cos_2.csv','a',newline='',encoding='utf-8')
+      fieldnames = ['step', 'error_ratio', 'cos']
+      writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+      if self.csv_log == 0:
+        writer.writeheader()
+        self.csv_log = 1
+      # writer = csv.writer(csv_file)
+      cos, error_ratio = log
+      writer.writerow({'step': self.update_step, 'cos': cos[0], 'error_ratio': error_ratio[0]})
 
     #print(jnp.sum(jnp.abs(grad_array)==0))
 
