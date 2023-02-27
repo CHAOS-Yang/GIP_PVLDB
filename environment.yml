@@ -189,8 +189,6 @@ dependencies:
     - tensorflow-gpu==2.6.0
     - tensorflow-metadata==1.9.0
     - toolz==0.11.2
-    - torch==1.12.1
-    - torchvision==0.13.1
     - tqdm==4.64.0
     - typing-extensions==3.10.0.0
 prefix: /home/jungang/miniconda3/envs/tf-gpu
