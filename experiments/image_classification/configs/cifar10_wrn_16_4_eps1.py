@@ -23,13 +23,13 @@ from ml_collections import config_dict as configdict
 @config_base.wrap_get_config
 def get_config(config):
   """Experiment config."""
-  config.checkpoint_dir = '/home/jungang/jax_privacy/result/eps=1/baseline_bz256_std1.5_lr0.1'  
+  config.checkpoint_dir = '../../result/eps=1/baseline'  
 
   config.experiment_kwargs = configdict.ConfigDict(
       dict(
           config=dict(
               num_updates=875,
-              checkpoint_dir = '/home/jungang/jax_privacy/result/eps=1/baseline_bz256_std1.5_lr0.1',
+              checkpoint_dir = '../../result/eps=1/baseline',
               save_final_checkpoint_as_npy = True,
               load_checkpoint_from_npy = False,
               load_checkpoint_dir = None,

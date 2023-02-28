@@ -34,11 +34,21 @@ Note: we provide examples of configurations for various experiments.
 python run_experiment.py --config=configs/cifar10_wrn_16_4_eps1.py --jaxline_mode=train_eval_multithreaded
 ```
 
-## Fine-tuning on CIFAR
+## Training from Scratch on CIFAR-10 with Random Pruning
 
 ```
-python run_experiment.py --config=configs/cifar10_wrn_28_10_eps1_finetune.py --jaxline_mode=train_eval_multithreaded
+python run_experiment.py --config=configs/cifar10_wrn_16_4_eps1_random10.py --jaxline_mode=train_eval_multithreaded
 ```
 
-See `jax_privacy/src/training/image_classsification/config_base.py` for the available pre-trained models.
+## Training from Scratch on CIFAR-10 with GIP
+
+```
+python run_experiment.py --config=configs/cifar10_wrn_16_4_eps1_top10.py --jaxline_mode=train_eval_multithreaded
+```
+
+## Fine-tuning on CIFAR-10 with GIP
+
+```
+python run_experiment.py --config=configs/cifar10_wrn_20_10_eps1_top10.py --jaxline_mode=train_eval_multithreaded
+```
 
