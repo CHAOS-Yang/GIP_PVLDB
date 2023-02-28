@@ -16,6 +16,7 @@ reflected in imports of the package:
 cd jax_privacy
 pip install -e .
 ```
+* Due to we refer the installation tutorials from [Jax-Privacy](https://github.com/deepmind/jax_privacy), we also present our environment based on conda for reference with a detailed version of the package in [environment.yml](environment.yml).
 
 ## Reproducing Results<a id="reproducing-results"></a>
 
@@ -25,7 +26,7 @@ If you use code from this repository, please cite the following reference:
 ```
 @software{gip2023yang,
   author = {Jungang, Yang and Liyao, Xiang and Hangyu, Ye and Pengzhi, Chu and Xinbing, Wang and Chenghu, Zhou},
-  title = {Improving Differentially-Private Deep Learning with Gradients Index Pruning},
+  title = {Gradients Index Pruning for Differentially-Private Deep Learning},
   url = {https://github.com/CHAOS-Yang/GIP_PVLDB},
   version = {0.1.0},
   year = {2023},
