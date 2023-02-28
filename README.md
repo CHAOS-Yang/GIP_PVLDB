@@ -19,6 +19,7 @@ pip install -e .
 * Due to we refer the installation tutorials from [Jax-Privacy](https://github.com/deepmind/jax_privacy), we also present our environment based on conda for reference with a detailed version of the package in [environment.yml](environment.yml).
 
 ## Reproducing Results<a id="reproducing-results"></a>
+We explain the reproducing details in [experiments/image_classification](experiments/image_classification) and [experiments/imdb](experiments/imdb).
 
 ## How to Cite This Repository <a id="citing"></a>
 If you use code from this repository, please cite the following reference:

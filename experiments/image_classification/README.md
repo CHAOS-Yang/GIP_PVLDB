@@ -1,12 +1,6 @@
 # Image Classification Experiments
 
-Reproducing experiments of the paper "Unlocking High-Accuracy Differentially Private Image Classification through Scale"
-
-This work is available on arXiv at [this link](https://arxiv.org/abs/2204.13650).
-If you use it, please cite the following [bibtex reference](https://github.com/deepmind/jax_privacy/blob/main/bibtex/de2022unlocking.bib).
-
-The following instructions assume that our package has been installed through
-[option 2](https://github.com/deepmind/jax_privacy#install-option2).
+Reproducing experiments in the paper.
 
 ## Intro
 
@@ -29,10 +23,10 @@ where the config file contains all relevant hyper-parameters for the experiment.
   - Number of updates: `config.experiment_kwargs.config.num_updates`
   - Privacy budget (delta): `config.experiment_kwargs.config.dp.target_delta`
   - Privacy budget (epsilon): `config.experiment_kwargs.config.dp.stop_training_at_epsilon`
+  - Pruning Method: `config.experiment_kwargs.config.dp.batch_pruning_method`('TopK_first','Random', 'None')
+  - Retain amount: `config.experiment_kwargs.config.dp.batch_pruning_amount`(0-100)
 
-Note: we provide examples of configurations for various experiments. To
-reproduce the results of our paper, please refer to the hyper-parameters listed
- in Appendix C and update the relevant configuration file.
+Note: we provide examples of configurations for various experiments. 
 
 ## Training from Scratch on CIFAR-10
 
@@ -40,26 +34,11 @@ reproduce the results of our paper, please refer to the hyper-parameters listed
 python run_experiment.py --config=configs/cifar10_wrn_16_4_eps1.py --jaxline_mode=train_eval_multithreaded
 ```
 
-
-## Training from Scratch on ImageNet
-
-```
-python run_experiment.py --config=configs/imagenet_nf_resnet_50_eps8.py --jaxline_mode=train_eval_multithreaded
-```
-
 ## Fine-tuning on CIFAR
 
 ```
-python run_experiment.py --config=configs/cifar100_wrn_28_10_eps1_finetune.py --jaxline_mode=train_eval_multithreaded
+python run_experiment.py --config=configs/cifar10_wrn_28_10_eps1_finetune.py --jaxline_mode=train_eval_multithreaded
 ```
 
 See `jax_privacy/src/training/image_classsification/config_base.py` for the available pre-trained models.
 
-## Additional Details
-
-- Training and evaluation accuracies throughout training will be printed to the console. At the moment JAXline does not have the capability to save model checkpoints to disk.
-- If you are observing Out of Memory errors with the default configs, consider reducing the value of `config.experiment_kwargs.config.training.batch_size.per_device_per_step` to ensure the number of examples processed each time step fits in memory. This might make training slower, but will not change the effective batch-size used for each model update. Note that `config.experiment_kwargs.config.training.batch_size.init_value` should be divisible by `config.experiment_kwargs.config.training.batch_size.per_device_per_step` times the number of accelerators in your machine.
-- The number of updates given in the config is ignored if `stop_training_at_epsilon` is specified, in which case the training automatically stops when the total privacy budget has been spent.
-- The `auto_tune` feature in the config can be used to, for example, calibrate the noise multiplier under a pre-specified privacy budget, number of iterations and batch-size.
-- The code supports using an `optax` learning-rate schedule, though we do not use it in practice to get our best results.
-- The use of a batch-size schedule is not guaranteed to work at this time.
