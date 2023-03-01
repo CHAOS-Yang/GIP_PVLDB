@@ -5,7 +5,8 @@ This codebase provides an algorithm of DPSGD with index pruning that builds off 
 ## Reproducing Results<a id="reproducing-results"></a>
 We explain the reproducing details in [experiments/image_classification](experiments/image_classification) and [experiments/imdb](experiments/imdb).
 
-
+## Proofs <a id="proof"></a>
+We have also attached the proofs of the lemmas and theorems in [supplementary_material.pdf](supplementary_material.pdf).
 
 ## How to Cite This Repository <a id="citing"></a>
 If you use code from this repository, please cite the following reference:
