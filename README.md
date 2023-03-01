@@ -20,3 +20,5 @@ If you use code from this repository, please cite the following reference:
 }
 ```
 
+## Acknowledgements
+[Jax-Privacy](https://github.com/deepmind/jax_privacy)

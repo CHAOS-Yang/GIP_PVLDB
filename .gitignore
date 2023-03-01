@@ -150,11 +150,10 @@ static
 experiments/image_classification/~
 result
 experiments/image_classification/result
-jax_privacy/log/
 # experiments/image_classification/configs/
 experiments/imdb/data
 experiments/imdb/log
 experiments/imdb/*.sh
 experiments/image_classification/*.sh
-experiments/jax-gcn/
+
 

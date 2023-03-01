@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2022 DeepMind Technologies Limited.
+# Copyright 2022 DeepMind Technologies and Jungang Yang Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ from jax_privacy.src.training.image_classification.models import vgg16
 from jax_privacy.src.training.image_classification.models import resnet
 from jax_privacy.src.training.image_classification.models import resnet20
 from jax_privacy.src.training.image_classification.models import lenet
-from jax_privacy.src.training.image_classification.models import alexnet
 from jax_privacy.src.training.image_classification.models import mlp
 from jax_privacy.src.training.image_classification.models.common import restore_from_path
 import numpy as np
