@@ -2,24 +2,11 @@
 
 This codebase provides an algorithm of DPSGD with index pruning that builds off and rewrites [Jax-Privacy](https://github.com/deepmind/jax_privacy).
 
-## Installation<a id="installation"></a>
-
-**Note:** to ensure that your installation is compatible with your local
-accelerators such as a GPU, we recommend to first follow the corresponding
-instructions to install [TensorFlow](https://github.com/tensorflow/tensorflow#install)
-and [JAX](https://github.com/google/jax#installation).
-
-* Then the code can be installed so that local modifications to the code are
-reflected in imports of the package:
-
-```
-cd jax_privacy
-pip install -e .
-```
-* Due to we refer the installation tutorials from [Jax-Privacy](https://github.com/deepmind/jax_privacy), we also present our environment based on conda for reference with a detailed version of the package in [environment.yml](environment.yml).
-
 ## Reproducing Results<a id="reproducing-results"></a>
 We explain the reproducing details in [experiments/image_classification](experiments/image_classification) and [experiments/imdb](experiments/imdb).
+
+## Proofs <a id="proof"></a>
+We have also attached the proofs of the lemmas and theorems in [supplementary_material.pdf](supplementary_material.pdf).
 
 ## How to Cite This Repository <a id="citing"></a>
 If you use code from this repository, please cite the following reference:
@@ -29,8 +16,9 @@ If you use code from this repository, please cite the following reference:
   author = {Jungang, Yang and Liyao, Xiang and Hangyu, Ye and Pengzhi, Chu and Xinbing, Wang and Chenghu, Zhou},
   title = {Gradients Index Pruning for Differentially-Private Deep Learning},
   url = {https://github.com/CHAOS-Yang/GIP_PVLDB},
-  version = {0.1.0},
   year = {2023},
 }
 ```
 
+## Acknowledgements
+[Jax-Privacy](https://github.com/deepmind/jax_privacy)

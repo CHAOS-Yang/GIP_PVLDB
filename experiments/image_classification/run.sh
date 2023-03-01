@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0 python run_experiment.py --config=configs/resnet18/cifar10_resnet20_eps2_lr4_top10.py --jaxline_mode=train_eval_multithreaded
+CUDA_VISIBLE_DEVICES=0 python run_experiment.py --config=configs/cifar10_wrn_16_4_eps1_top10.py --jaxline_mode=train_eval_multithreaded

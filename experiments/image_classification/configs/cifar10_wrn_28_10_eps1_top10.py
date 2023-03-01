@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Training a WRN-16-4 on CIFAR-10 with (1.0, 1e-5)-DP."""
+"""Training a WRN-28-10 on CIFAR-10 with (1.0, 1e-5)-DP and GIP method."""
 
 from jax_privacy.src.training.image_classification import config_base
 from jax_privacy.src.training.image_classification import data
@@ -23,20 +23,20 @@ from ml_collections import config_dict as configdict
 @config_base.wrap_get_config
 def get_config(config):
   """Experiment config."""
-  config.checkpoint_dir = '../../result/eps=1/baseline'  
-
+#   config.save_checkpoint_interval = 300
+  config.checkpoint_dir = '../../result/pretrain_eps=1/top10' 
   config.experiment_kwargs = configdict.ConfigDict(
       dict(
           config=dict(
-              num_updates=875,
-              checkpoint_dir = '../../result/eps=1/baseline',
+              num_updates=250,
+              checkpoint_dir = '../../jax_privacy/result/pretrain_eps=1/top10',
               save_final_checkpoint_as_npy = True,
               load_checkpoint_from_npy = False,
               load_checkpoint_dir = None,
               optimizer=dict(
                   name='sgd',
                   lr=dict(
-                      init_value=0.1,
+                      init_value=1.0,
                       decay_schedule_name=None,
                       decay_schedule_kwargs=None,
                       relative_schedule_kwargs=None,
@@ -55,20 +55,20 @@ def get_config(config):
               model=dict(
                   model_type='wideresnet',
                   model_kwargs=dict(
-                      depth=16,
-                      width=4,
+                      depth=28,
+                      width=10,
                   ),
                   restore=dict(
-                      path=None,
-                      params_key=None,
-                      network_state_key=None,
-                      layer_to_reset=None,
+                      path=config_base.MODEL_CKPT.WRN_28_10_IMAGENET32,
+                      params_key='params',
+                      network_state_key='network_state',
+                      layer_to_reset='wide_res_net/Softmax',
                   ),
               ),
               training=dict(
                   batch_size=dict(
-                      init_value=256,
-                      per_device_per_step=64,
+                      init_value=16384,
+                      per_device_per_step=16,
                       scale_schedule=None,  # example: {'2000': 8, '4000': 16},
                   ),
                   weight_decay=0.0,  # L-2 regularization,
@@ -76,11 +76,10 @@ def get_config(config):
                   dp=dict(
                       target_delta=1e-5,
                       clipping_norm=1.0,  # float('inf') or None to deactivate
-                    #   pruning_amount=0.9,
                       stop_training_at_epsilon=1.0,  # None,
-                      rescale_to_unit_norm=True,
+                      rescale_to_unit_norm=False,
                       noise=dict(
-                          std_relative=1.5,  # noise multiplier
+                          std_relative=21.1,  # noise multiplier
                           ),
                       # Set the following flag to auto-tune one of:
                       # * 'batch_size'
@@ -89,11 +88,10 @@ def get_config(config):
                       # * 'num_updates'
                       # Set to `None` to deactivate auto-tunning
                       auto_tune=None,  # 'num_updates',  # None,
-                      per_example_pruning_amount=30,  ##(%)   cant be 100
+                      per_example_pruning_amount=10,  ##(%)   cant be 100
                       batch_pruning_amount=10,  ##(#)
                       datalens_pruning=False,
-                      batch_pruning_method="None",
-                      index_noise_weight=0,
+                      batch_pruning_method="TopK_first",
                       ),
                   logging=dict(
                       grad_clipping=True,
@@ -119,7 +117,7 @@ def get_config(config):
                   ),
                   random_flip=True,
                   random_crop=True,
-                  augmult=16, 
+                  augmult=16,  # implements arxiv.org/abs/2105.13343
                   ),
               evaluation=dict(
                   batch_size=100,

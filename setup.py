@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2022 DeepMind Technologies Limited.
+# Copyright 2022 DeepMind Technologies and Jungang Yang Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,17 +27,17 @@ def _parse_requirements(requirements_txt_path):
 
 def test_suite():
   test_loader = unittest.TestLoader()
-  all_tests = test_loader.discover('jax_privacy',
+  all_tests = test_loader.discover('GIP',
                                    pattern='*_test.py')
   return all_tests
 
 setup(
-    name='jax_privacy',
+    name='GIP',
     version='0.1.0',
-    description='Algorithms for Privacy-Preserving Machine Learning in JAX.',
-    url='https://github.com/deepmind/jax_privacy',
-    author='DeepMind',
-    author_email='jax-privacy-dev@deepmind.com',
+    description='Gradients Index Pruning for Differentially-Private Deep Learning based on Jax-privacy.',
+    url='https://github.com/CHAOS-Yang/GIP_PVLDB',
+    author='Jungang Yang',
+    author_email='yangjungang@sjtu.edu.cn',
     # Contained modules and scripts.
     packages=find_namespace_packages(exclude=['*_test.py', 'experiments.*']),
     install_requires=_parse_requirements('requirements.txt'),
